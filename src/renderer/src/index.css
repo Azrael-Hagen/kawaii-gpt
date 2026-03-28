@@ -1,0 +1,127 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Base resets ─────────────────────────────────────────────────────────── */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+  overflow: hidden;
+  background-color: #0F0F1A;
+  color: #F8F0FF;
+  font-family: 'Nunito', system-ui, sans-serif;
+}
+
+/* ── Custom scrollbar ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #2E2F52;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #B57BFF44;
+}
+
+/* ── Kawaii gradient text ────────────────────────────────────────────────── */
+.gradient-text {
+  background: linear-gradient(135deg, #FF6B9D, #B57BFF);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ── Kawaii gradient background (user bubble) ───────────────────────────── */
+.user-bubble-bg {
+  background: linear-gradient(135deg, #FF6B9D, #B57BFF);
+}
+
+/* ── Prose styles for AI markdown output ────────────────────────────────── */
+.prose-kawaii {
+  color: #F8F0FF;
+  line-height: 1.7;
+}
+.prose-kawaii p {
+  margin-bottom: 0.5rem;
+}
+.prose-kawaii p:last-child {
+  margin-bottom: 0;
+}
+.prose-kawaii strong {
+  color: #FF8FB1;
+  font-weight: 700;
+}
+.prose-kawaii em {
+  color: #C89BFF;
+}
+.prose-kawaii code {
+  background: #2E2F52;
+  color: #FF8FB1;
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-family: 'Fira Code', 'Cascadia Code', monospace;
+}
+.prose-kawaii pre {
+  background: #1A1B2E;
+  border: 1px solid #2E2F52;
+  border-radius: 10px;
+  padding: 1rem;
+  overflow-x: auto;
+  margin: 0.75rem 0;
+}
+.prose-kawaii pre code {
+  background: transparent;
+  color: #F8F0FF;
+  padding: 0;
+  font-size: 0.85em;
+}
+.prose-kawaii ul, .prose-kawaii ol {
+  padding-left: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+.prose-kawaii li {
+  margin-bottom: 0.2rem;
+}
+.prose-kawaii blockquote {
+  border-left: 3px solid #B57BFF;
+  padding-left: 1rem;
+  color: #9A8FBE;
+  font-style: italic;
+  margin: 0.5rem 0;
+}
+.prose-kawaii h1, .prose-kawaii h2, .prose-kawaii h3 {
+  color: #FF8FB1;
+  font-weight: 700;
+  margin: 0.75rem 0 0.5rem;
+}
+.prose-kawaii a {
+  color: #B57BFF;
+  text-decoration: underline;
+}
+.prose-kawaii hr {
+  border-color: #2E2F52;
+  margin: 0.75rem 0;
+}
+
+/* ── Typing indicator dots ───────────────────────────────────────────────── */
+.typing-dot:nth-child(1) { animation-delay: 0s;    }
+.typing-dot:nth-child(2) { animation-delay: 0.2s;  }
+.typing-dot:nth-child(3) { animation-delay: 0.4s;  }
+
+/* ── Drag region for frameless window ───────────────────────────────────── */
+.drag-region {
+  -webkit-app-region: drag;
+}
+.no-drag {
+  -webkit-app-region: no-drag;
+}

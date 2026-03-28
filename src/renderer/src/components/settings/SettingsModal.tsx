@@ -1,0 +1,973 @@
+import { useEffect, useState } from 'react'
+import { X, RefreshCw, Cloud, Server, Plus, Trash2, Image } from 'lucide-react'
+import { useSettingsStore } from '@/store/settingsStore'
+import { OpenAICompatibleClient } from '@/services/aiClient'
+import { listSpeechVoices } from '@/services/voice'
+import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
+import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus } from '@/types'
+import { formatTime } from '@/utils/formatters'
+
+interface CloudPreset {
+  id: 'openrouter' | 'openai' | 'groq' | 'gemini' | 'together'
+  label: string
+  baseUrl: string
+  model: string
+}
+
+const CLOUD_PRESETS: CloudPreset[] = [
+  {
+    id: 'openrouter',
+    label: 'OpenRouter (multimodelo, recomendado)',
+    baseUrl: 'https://openrouter.ai/api/v1',
+    model: 'openai/gpt-5.4-mini',
+  },
+  {
+    id: 'openai',
+    label: 'OpenAI / ChatGPT API',
+    baseUrl: 'https://api.openai.com/v1',
+    model: 'gpt-5.4-mini',
+  },
+  {
+    id: 'groq',
+    label: 'Groq',
+    baseUrl: 'https://api.groq.com/openai/v1',
+    model: 'llama-3.3-70b-versatile',
+  },
+  {
+    id: 'gemini',
+    label: 'Google Gemini',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai',
+    model: 'gemini-1.5-flash',
+  },
+  {
+    id: 'together',
+    label: 'Together AI',
+    baseUrl: 'https://api.together.xyz/v1',
+    model: 'meta-llama/Llama-3.3-70B-Instruct-Turbo-Free',
+  },
+]
+
+interface Props {
+  open: boolean
+  onClose: () => void
+  models: AIModel[]
+  status: 'checking' | 'connected' | 'disconnected'
+  onRefreshModels: () => void
+}
+
+export default function SettingsModal({ open, onClose, models, status, onRefreshModels }: Props) {
+  const { settings, update, reset } = useSettingsStore()
+  const [apiKey, setApiKey] = useState('')
+  const [additionalKeys, setAdditionalKeys] = useState<Record<string, string>>({})
+  const [checkingCloud, setCheckingCloud] = useState(false)
+  const [connectivityResults, setConnectivityResults] = useState<CloudConnectivityStatus[]>([])
+  const [legacyRuntimeStatus, setLegacyRuntimeStatus] = useState<{ running: boolean; pid?: number; command?: string; lastError?: string } | null>(null)
+  const [legacyRuntimeBusy, setLegacyRuntimeBusy] = useState(false)
+  const [availableVoices, setAvailableVoices] = useState<Array<{ name: string; lang: string; default: boolean }>>([])
+
+  useEffect(() => {
+    if (!open) return
+    getProviderApiKey().then(setApiKey)
+    const providers = settings.additionalProviders ?? []
+    Promise.all(
+      providers.map(async ap => {
+        const key = await getAdditionalProviderKey(ap.id)
+        return [ap.id, key] as [string, string]
+      }),
+    ).then(entries => setAdditionalKeys(Object.fromEntries(entries)))
+    setConnectivityResults(settings.cloudConnectivity ?? [])
+    setAvailableVoices(listSpeechVoices())
+    window.api.legacyStatus?.().then(setLegacyRuntimeStatus).catch(() => setLegacyRuntimeStatus(null))
+  }, [open])  // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!open) return null
+
+  const providerLabel = settings.provider === 'ollama'
+    ? 'Ollama Base URL'
+    : settings.provider === 'openai-compatible'
+      ? 'Cloud Provider Base URL'
+      : settings.provider === 'legacy-engine'
+        ? 'Legacy Engine Base URL'
+      : 'Smart Routing (local + cloud)'
+
+  const providerPlaceholder = settings.provider === 'ollama'
+    ? 'http://localhost:11434'
+    : settings.provider === 'legacy-engine'
+      ? 'http://127.0.0.1:8765/v1'
+    : 'https://openrouter.ai/api/v1'
+
+  const saveAndClose = async () => {
+    await setProviderApiKey(apiKey.trim())
+    await Promise.all(
+      (settings.additionalProviders ?? []).map(ap =>
+        setAdditionalProviderKey(ap.id, additionalKeys[ap.id] ?? ''),
+      ),
+    )
+    onClose()
+  }
+
+  const applyRecommendedProfile = () => {
+    update({
+      provider: 'smart',
+      cloudBaseUrl: 'https://openrouter.ai/api/v1',
+      providerBaseUrl: 'https://openrouter.ai/api/v1',
+      cloudModel: 'google/gemini-2.0-flash-exp:free',
+      defaultModel: 'google/gemini-2.0-flash-exp:free',
+      prioritizeUnrestricted: true,
+      preferFreeTier: true,
+      autoFailover: true,
+      additionalProviders: [
+        { id: 'ap1', name: 'Groq', baseUrl: 'https://api.groq.com/openai/v1', enabled: Boolean(additionalKeys['ap1']?.trim()) },
+        { id: 'ap2', name: 'Google Gemini', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', enabled: Boolean(additionalKeys['ap2']?.trim()) },
+        { id: 'ap3', name: 'Together AI', baseUrl: 'https://api.together.xyz/v1', enabled: Boolean(additionalKeys['ap3']?.trim()) },
+      ],
+    })
+  }
+
+  const setProvider = (provider: AIProvider) => {
+    const providerBaseUrl =
+      provider === 'ollama' ? settings.localBaseUrl :
+      provider === 'legacy-engine' ? settings.legacyEngineBaseUrl :
+      provider === 'openai-compatible' ? settings.cloudBaseUrl :
+      settings.localBaseUrl
+    update({ provider, providerBaseUrl, defaultModel: '' })
+  }
+
+  const applyCloudPreset = (preset: CloudPreset) => {
+    update({
+      provider: settings.provider === 'ollama' ? 'openai-compatible' : settings.provider,
+      cloudBaseUrl: preset.baseUrl,
+      providerBaseUrl: preset.baseUrl,
+      cloudModel: preset.model,
+      defaultModel: preset.model,
+    })
+  }
+
+  const modelForProvider = (provider: AIProvider): string => {
+    if (provider === 'ollama') return settings.localModel
+    if (provider === 'openai-compatible') return settings.cloudModel
+    if (provider === 'legacy-engine') return settings.legacyModel
+    return settings.defaultModel
+  }
+
+  const setModelForProvider = (provider: AIProvider, model: string): void => {
+    if (provider === 'ollama') { update({ localModel: model, defaultModel: model }); return }
+    if (provider === 'openai-compatible') { update({ cloudModel: model, defaultModel: model }); return }
+    if (provider === 'legacy-engine') { update({ legacyModel: model, defaultModel: model }); return }
+    update({ defaultModel: model })
+  }
+
+  const updateAdditionalProvider = (index: number, patch: Partial<AdditionalProvider>) => {
+    const newProviders = [...(settings.additionalProviders ?? [])]
+    newProviders[index] = { ...newProviders[index], ...patch }
+    update({ additionalProviders: newProviders })
+  }
+
+  const testCloudConnectivity = async () => {
+    setCheckingCloud(true)
+    setConnectivityResults([])
+
+    const targets: Array<{ id: string; label: string; baseUrl: string; key: string; expectedModel?: string }> =
+      settings.provider === 'legacy-engine'
+        ? [
+            {
+              id: 'legacy',
+              label: `Legacy (${settings.legacyEngineBaseUrl})`,
+              baseUrl: settings.legacyEngineBaseUrl,
+              key: apiKey.trim(),
+              expectedModel: settings.legacyModel || undefined,
+            },
+          ]
+        : [
+            {
+              id: 'main',
+              label: `Principal (${settings.cloudBaseUrl})`,
+              baseUrl: settings.cloudBaseUrl,
+              key: apiKey.trim(),
+              expectedModel: settings.cloudModel || undefined,
+            },
+            ...(settings.additionalProviders ?? [])
+              .filter(ap => ap.enabled && ap.baseUrl)
+              .map(ap => ({
+                id: ap.id,
+                label: `${ap.name || ap.id} (${ap.baseUrl})`,
+                baseUrl: ap.baseUrl,
+                key: (additionalKeys[ap.id] ?? '').trim(),
+                expectedModel: undefined,
+              })),
+          ]
+
+    const results: CloudConnectivityStatus[] = []
+    const checkedAt = Date.now()
+
+    for (const t of targets) {
+      const startedAt = Date.now()
+
+      if (!t.key && t.id !== 'legacy') {
+        results.push({
+          id: t.id,
+          label: t.label,
+          ok: false,
+          detail: 'Sin API key',
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })
+        continue
+      }
+
+      try {
+        const client = new OpenAICompatibleClient(t.baseUrl, t.key)
+        const ok = await client.checkConnection()
+        if (!ok) {
+          results.push({
+            id: t.id,
+            label: t.label,
+            ok: false,
+            detail: 'No respondió / credenciales inválidas',
+            latencyMs: Date.now() - startedAt,
+            checkedAt,
+          })
+          continue
+        }
+
+        const modelsList = await client.listModels()
+        const count = modelsList.length
+        const hasExpected = t.expectedModel
+          ? modelsList.some(m => m.name.toLowerCase() === t.expectedModel!.toLowerCase())
+          : true
+
+        results.push({
+          id: t.id,
+          label: t.label,
+          ok: hasExpected,
+          detail: hasExpected
+            ? `OK (${count} modelos)`
+            : `Conecta, pero no encuentra el modelo configurado: ${t.expectedModel}`,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        const shortMsg = msg.replace(/\s+/g, ' ').slice(0, 140)
+        results.push({
+          id: t.id,
+          label: t.label,
+          ok: false,
+          detail: shortMsg,
+          latencyMs: Date.now() - startedAt,
+          checkedAt,
+        })
+      }
+    }
+
+    setConnectivityResults(results)
+    update({ cloudConnectivity: results })
+    setCheckingCloud(false)
+  }
+
+  const refreshLegacyRuntimeStatus = async () => {
+    try {
+      const s = await window.api.legacyStatus?.()
+      if (s) setLegacyRuntimeStatus(s)
+    } catch {
+      // ignore
+    }
+  }
+
+  const startLegacyRuntime = async () => {
+    setLegacyRuntimeBusy(true)
+    try {
+      const next = await window.api.legacyStart?.({
+        command: settings.legacyRuntimeCommand,
+        args: settings.legacyRuntimeArgs,
+        cwd: settings.legacyRuntimeCwd,
+      })
+      if (next) setLegacyRuntimeStatus(next)
+    } finally {
+      setLegacyRuntimeBusy(false)
+    }
+  }
+
+  const stopLegacyRuntime = async () => {
+    setLegacyRuntimeBusy(true)
+    try {
+      const next = await window.api.legacyStop?.()
+      if (next) setLegacyRuntimeStatus(next)
+    } finally {
+      setLegacyRuntimeBusy(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 backdrop-blur-sm animate-fade-in">
+      <div className="w-[680px] max-w-[94vw] max-h-[90vh] overflow-y-auto bg-kawaii-surface border border-kawaii-surface-3 rounded-2xl shadow-2xl animate-slide-up">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-kawaii-surface-3">
+          <h2 className="text-lg font-extrabold gradient-text">Settings ⚙️</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg text-kawaii-muted hover:text-kawaii-text hover:bg-kawaii-surface-2">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-5">
+
+          {/* ── Provider ───────────────────────────────────────────────────── */}
+          <section className="space-y-2">
+            <label className="block text-sm font-bold text-kawaii-text">AI Provider</label>
+            <div className={`grid gap-2 ${settings.enableLegacyEngine ? 'grid-cols-4' : 'grid-cols-3'}`}>
+              <ProviderCard
+                icon={<Server size={16} />}
+                title="Ollama"
+                subtitle="Local o endpoint Ollama remoto"
+                active={settings.provider === 'ollama'}
+                onClick={() => setProvider('ollama')}
+              />
+              <ProviderCard
+                icon={<Cloud size={16} />}
+                title="Cloud"
+                subtitle="OpenRouter, OpenAI, Groq y similares"
+                active={settings.provider === 'openai-compatible'}
+                onClick={() => setProvider('openai-compatible')}
+              />
+              <ProviderCard
+                icon={<RefreshCw size={16} />}
+                title="Smart"
+                subtitle="Balance automático local + nube + Kawaii + IA generativa"
+                active={settings.provider === 'smart'}
+                onClick={() => setProvider('smart')}
+              />
+              {settings.enableLegacyEngine && (
+                <ProviderCard
+                  icon={<Server size={16} />}
+                  title="Legacy"
+                  subtitle="Motor externo KawaiiGPT"
+                  active={settings.provider === 'legacy-engine'}
+                  onClick={() => setProvider('legacy-engine')}
+                />
+              )}
+            </div>
+
+            <div className="flex items-center gap-2 pt-1">
+              <input
+                id="enable-legacy-engine"
+                type="checkbox"
+                className="accent-kawaii-pink"
+                checked={settings.enableLegacyEngine}
+                onChange={(e) => {
+                  const checked = e.target.checked
+                  const patch: Partial<typeof settings> = { enableLegacyEngine: checked }
+                  if (!checked && settings.provider === 'legacy-engine') {
+                    patch.provider = 'smart'
+                    patch.providerBaseUrl = settings.localBaseUrl
+                  }
+                  update(patch)
+                }}
+              />
+              <label htmlFor="enable-legacy-engine" className="text-xs text-kawaii-dim">
+                Habilitar motor Kawaii dentro de la estrategia Smart y como modo manual
+              </label>
+            </div>
+
+            {(settings.provider === 'openai-compatible' || settings.provider === 'smart') && (
+              <div className="mt-2">
+                <p className="text-xs text-kawaii-dim mb-2">Proveedor cloud principal (presets):</p>
+                <div className="grid grid-cols-1 gap-1.5">
+                  {CLOUD_PRESETS.map(p => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => applyCloudPreset(p)}
+                      className={`text-left px-2.5 py-2 rounded-lg border text-xs transition-all ${
+                        settings.cloudBaseUrl === p.baseUrl
+                          ? 'border-kawaii-pink bg-kawaii-surface-2 text-kawaii-text'
+                          : 'border-kawaii-surface-3 bg-kawaii-surface text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-2'
+                      }`}
+                    >
+                      <div className="font-semibold">{p.label}</div>
+                      <div className="text-[10px] opacity-80">{p.baseUrl} · {p.model}</div>
+                    </button>
+                  ))}
+                </div>
+                    {settings.enableLegacyEngine && (
+                      <p className="mt-2 text-[11px] text-kawaii-dim leading-relaxed">
+                        Smart usará Kawaii para prompts largos/creativos y como respaldo cuando la nube falle.
+                      </p>
+                    )}
+              </div>
+            )}
+
+            {(settings.enableLegacyEngine || settings.provider === 'legacy-engine') && (
+              <div className="mt-2 border border-kawaii-surface-3 rounded-xl p-3 bg-kawaii-surface-2 space-y-2">
+                <div className="text-xs font-semibold text-kawaii-text">Runtime Legacy (fase 2)</div>
+
+                <div>
+                  <label className="block text-[11px] text-kawaii-dim mb-1">Comando</label>
+                  <input
+                    type="text"
+                    value={settings.legacyRuntimeCommand}
+                    onChange={(e) => update({ legacyRuntimeCommand: e.target.value })}
+                    className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                    placeholder="python"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-kawaii-dim mb-1">Args</label>
+                  <input
+                    type="text"
+                    value={settings.legacyRuntimeArgs}
+                    onChange={(e) => update({ legacyRuntimeArgs: e.target.value })}
+                    className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                    placeholder="kawai.py --api --port 8765"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] text-kawaii-dim mb-1">Directorio de trabajo (opcional)</label>
+                  <input
+                    type="text"
+                    value={settings.legacyRuntimeCwd}
+                    onChange={(e) => update({ legacyRuntimeCwd: e.target.value })}
+                    className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                    placeholder="C:/ruta/KawaiiGPT"
+                  />
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    disabled={legacyRuntimeBusy}
+                    onClick={startLegacyRuntime}
+                    className="px-2.5 py-1.5 rounded-lg bg-kawaii-surface border border-kawaii-surface-3 text-xs hover:bg-kawaii-surface-3 disabled:opacity-60"
+                  >
+                    Iniciar runtime
+                  </button>
+                  <button
+                    type="button"
+                    disabled={legacyRuntimeBusy}
+                    onClick={stopLegacyRuntime}
+                    className="px-2.5 py-1.5 rounded-lg bg-kawaii-surface border border-kawaii-surface-3 text-xs hover:bg-kawaii-surface-3 disabled:opacity-60"
+                  >
+                    Detener runtime
+                  </button>
+                  <button
+                    type="button"
+                    disabled={legacyRuntimeBusy}
+                    onClick={refreshLegacyRuntimeStatus}
+                    className="px-2.5 py-1.5 rounded-lg bg-kawaii-surface border border-kawaii-surface-3 text-xs hover:bg-kawaii-surface-3 disabled:opacity-60"
+                  >
+                    Refrescar
+                  </button>
+                </div>
+
+                {legacyRuntimeStatus && (
+                  <div className="text-[11px] text-kawaii-dim leading-relaxed border-t border-kawaii-surface-3 pt-1">
+                    <div>Estado: <span className={legacyRuntimeStatus.running ? 'text-kawaii-success' : 'text-kawaii-dim'}>{legacyRuntimeStatus.running ? 'en ejecución' : 'detenido'}</span></div>
+                    {typeof legacyRuntimeStatus.pid === 'number' && <div>PID: <span className="text-kawaii-text">{legacyRuntimeStatus.pid}</span></div>}
+                    {legacyRuntimeStatus.command && <div>Comando: <span className="text-kawaii-text">{legacyRuntimeStatus.command}</span></div>}
+                    {legacyRuntimeStatus.lastError && <div>Último mensaje: <span className="text-kawaii-text">{legacyRuntimeStatus.lastError}</span></div>}
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+
+          {/* ── Endpoints ──────────────────────────────────────────────────── */}
+          <section className="space-y-2">
+            <label className="block text-sm font-bold text-kawaii-text">{providerLabel}</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={settings.provider === 'ollama' ? settings.localBaseUrl : settings.provider === 'legacy-engine' ? settings.legacyEngineBaseUrl : settings.cloudBaseUrl}
+                onChange={(e) => {
+                  const value = e.target.value.trim()
+                  if (settings.provider === 'ollama') update({ localBaseUrl: value, providerBaseUrl: value })
+                  else if (settings.provider === 'legacy-engine') update({ legacyEngineBaseUrl: value, providerBaseUrl: value })
+                  else update({ cloudBaseUrl: value, providerBaseUrl: value })
+                }}
+                className="flex-1 bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kawaii-purple"
+                placeholder={providerPlaceholder}
+              />
+              <button
+                onClick={onRefreshModels}
+                className="px-3 rounded-lg bg-kawaii-surface-2 border border-kawaii-surface-3 hover:bg-kawaii-surface-3"
+                title="Refresh models"
+              >
+                <RefreshCw size={16} />
+              </button>
+            </div>
+            <p className={`text-xs ${status === 'connected' ? 'text-kawaii-success' : status === 'disconnected' ? 'text-kawaii-error' : 'text-kawaii-muted'}`}>
+              Status: {status}
+            </p>
+            {settings.provider === 'smart' && (
+              <>
+                <input
+                  type="text"
+                  value={settings.localBaseUrl}
+                  onChange={(e) => update({ localBaseUrl: e.target.value.trim() })}
+                  className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kawaii-purple"
+                  placeholder="Local URL: http://localhost:11434"
+                />
+                <input
+                  type="text"
+                  value={settings.cloudBaseUrl}
+                  onChange={(e) => update({ cloudBaseUrl: e.target.value.trim() })}
+                  className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kawaii-purple"
+                  placeholder="Cloud URL: https://openrouter.ai/api/v1"
+                />
+              </>
+            )}
+          </section>
+
+          {/* ── Cloud API key (main provider) ──────────────────────────────── */}
+          {(settings.provider === 'openai-compatible' || settings.provider === 'smart' || settings.provider === 'legacy-engine') && (
+            <section className="space-y-2">
+              <label className="block text-sm font-bold text-kawaii-text">
+                {settings.provider === 'smart'
+                  ? 'Cloud Provider API Key'
+                  : settings.provider === 'legacy-engine'
+                    ? 'Legacy Engine API Key (opcional)'
+                    : 'API Key'}
+              </label>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kawaii-purple"
+                placeholder="sk-..."
+              />
+              <p className="text-[11px] text-kawaii-dim">
+                Guardada localmente en la app fuera del renderer.
+              </p>
+
+              <div className="pt-1">
+                <button
+                  type="button"
+                  onClick={testCloudConnectivity}
+                  disabled={checkingCloud}
+                  className="w-full py-2 rounded-lg bg-kawaii-surface-2 border border-kawaii-surface-3 text-kawaii-text text-xs hover:bg-kawaii-surface-3 disabled:opacity-60"
+                >
+                  {checkingCloud
+                    ? 'Probando conectividad...'
+                    : settings.provider === 'legacy-engine'
+                      ? 'Probar conectividad legacy'
+                      : 'Probar conectividad cloud (main + adicionales)'}
+                </button>
+
+                {connectivityResults.length > 0 && (
+                  <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs space-y-1.5">
+                    {connectivityResults.map(r => (
+                      <div key={r.id} className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className={`font-semibold ${r.ok ? 'text-kawaii-success' : 'text-kawaii-error'}`}>
+                            {r.ok ? '●' : '○'} {r.label}
+                          </div>
+                          <div className="text-kawaii-dim">{r.detail}</div>
+                        </div>
+                        <div className="text-kawaii-dim whitespace-nowrap">{r.latencyMs} ms</div>
+                      </div>
+                    ))}
+                    <div className="pt-1 text-kawaii-dim border-t border-kawaii-surface-3">
+                      Ultima prueba: {formatTime(connectivityResults[0].checkedAt)}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {settings.cloudDiagnostics && (
+                <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="font-semibold text-kawaii-text">Diagnóstico cloud reciente</span>
+                    <button
+                      type="button"
+                      onClick={() => update({ cloudDiagnostics: null })}
+                      className="text-kawaii-dim hover:text-kawaii-text"
+                    >
+                      Limpiar
+                    </button>
+                  </div>
+                  <div className="text-kawaii-dim leading-relaxed">
+                    <div>Proveedor: <span className="text-kawaii-text">{settings.cloudDiagnostics.lastProvider}</span></div>
+                    <div>Error: <span className="text-kawaii-text">{settings.cloudDiagnostics.lastError}</span></div>
+                    <div>Intento: <span className="text-kawaii-text">{settings.cloudDiagnostics.attempt}/{settings.cloudDiagnostics.total}</span></div>
+                    {typeof settings.cloudDiagnostics.code === 'number' && (
+                      <div>Código HTTP: <span className="text-kawaii-text">{settings.cloudDiagnostics.code}</span></div>
+                    )}
+                    <div>Hora: <span className="text-kawaii-text">{formatTime(settings.cloudDiagnostics.lastAt)}</span></div>
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+
+          {/* ── Additional cloud providers ──────────────────────────────────── */}
+          <section className="space-y-2">
+            <label className="block text-sm font-bold text-kawaii-text flex items-center gap-2">
+              <Plus size={14} className="text-kawaii-purple" />
+              Proveedores adicionales
+            </label>
+            <p className="text-[11px] text-kawaii-dim leading-relaxed">
+              Conecta providers extra (Groq, Gemini, Together, OpenAI, etc.) para mejorar la rotación cloud.
+              Sus modelos aparecen marcados con [NombreProveedor] en el selector.
+            </p>
+            {(settings.additionalProviders ?? []).map((ap, i) => (
+              <div key={ap.id} className="border border-kawaii-surface-3 rounded-xl p-3 space-y-2 bg-kawaii-surface-2">
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id={`ap-${ap.id}-enabled`}
+                    checked={ap.enabled}
+                    onChange={e => updateAdditionalProvider(i, { enabled: e.target.checked })}
+                    className="accent-kawaii-pink"
+                  />
+                  <label htmlFor={`ap-${ap.id}-enabled`} className="text-xs font-semibold text-kawaii-text">
+                    Proveedor {i + 1}
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <input
+                    type="text"
+                    value={ap.name}
+                    onChange={e => updateAdditionalProvider(i, { name: e.target.value })}
+                    className="bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                    placeholder="Nombre (ej. Groq)"
+                  />
+                  <input
+                    type="text"
+                    value={ap.baseUrl}
+                    onChange={e => updateAdditionalProvider(i, { baseUrl: e.target.value.trim() })}
+                    className="bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                    placeholder="URL base (ej. https://api.groq.com/openai/v1)"
+                  />
+                </div>
+                <input
+                  type="password"
+                  value={additionalKeys[ap.id] ?? ''}
+                  onChange={e => setAdditionalKeys(prev => ({ ...prev, [ap.id]: e.target.value }))}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                  placeholder="API Key del proveedor"
+                />
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={applyRecommendedProfile}
+              className="w-full py-2 rounded-lg bg-kawaii-surface-2 border border-kawaii-surface-3 text-kawaii-text text-xs hover:bg-kawaii-surface-3"
+            >
+              Aplicar perfil recomendado: gratis + smart + rotacion
+            </button>
+          </section>
+
+          {/* ── Models ─────────────────────────────────────────────────────── */}
+          <section className="space-y-2">
+            <label className="block text-sm font-bold text-kawaii-text">
+              {settings.provider === 'smart' ? 'Smart Model Pool' : 'Default Model'}
+            </label>
+            <select
+              value={modelForProvider(settings.provider)}
+              onChange={(e) => setModelForProvider(settings.provider, e.target.value)}
+              className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kawaii-purple"
+            >
+              {models.length === 0 ? (
+                <option value="">No models available — refresh</option>
+              ) : (
+                models.map(model => (
+                  <option key={model.id} value={model.name}>{model.name}</option>
+                ))
+              )}
+            </select>
+
+            {settings.provider === 'smart' && (
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <input
+                  type="text"
+                  value={settings.localModel}
+                  onChange={(e) => update({ localModel: e.target.value.trim() })}
+                  className="bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2"
+                  placeholder="Model local (ej. qwen2.5:0.5b)"
+                />
+                <input
+                  type="text"
+                  value={settings.cloudModel}
+                  onChange={(e) => update({ cloudModel: e.target.value.trim() })}
+                  className="bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2"
+                  placeholder="Model cloud (ej. openai/gpt-4.1-mini)"
+                />
+              </div>
+            )}
+            <p className="text-[11px] text-kawaii-dim">
+              El catalogo cloud incluye familias GPT/ChatGPT, Gemini y Llama para seleccion automatica inteligente.
+            </p>
+          </section>
+
+          {/* ── Generative AI ───────────────────────────────────────────────── */}
+          <section className="space-y-2 border border-kawaii-surface-3 rounded-xl p-3 bg-kawaii-surface-2">
+            <div className="flex items-center gap-2">
+              <Image size={14} className="text-kawaii-pink" />
+              <label className="text-sm font-bold text-kawaii-text">IA Generativa (imágenes)</label>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-kawaii-text">
+              <input
+                type="checkbox"
+                checked={settings.imageGenEnabled}
+                onChange={(e) => update({ imageGenEnabled: e.target.checked })}
+                className="accent-kawaii-pink"
+              />
+              Activar generación de imágenes
+            </label>
+            {settings.imageGenEnabled && (
+              <>
+                <label className="flex items-center gap-2 text-sm text-kawaii-text">
+                  <input
+                    type="checkbox"
+                    checked={settings.imageGenAutoSelect}
+                    onChange={(e) => update({ imageGenAutoSelect: e.target.checked })}
+                    className="accent-kawaii-pink"
+                  />
+                  Auto-seleccionar modelo de imagen según proveedor
+                </label>
+                <div>
+                  <label className="block text-xs text-kawaii-muted mb-1">Modelo de imagen</label>
+                  <input
+                    type="text"
+                    value={settings.imageGenModel}
+                    onChange={(e) => update({ imageGenModel: e.target.value.trim() })}
+                    disabled={settings.imageGenAutoSelect}
+                    className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                    placeholder="dall-e-3  |  openai/dall-e-3  |  stability/stable-diffusion-3"
+                  />
+                </div>
+                <p className="text-[11px] text-kawaii-dim leading-relaxed">
+                  {settings.imageGenAutoSelect
+                    ? 'Smart elegirá automáticamente el mejor modelo de imagen compatible por proveedor y rotará si encuentra incompatibilidades.'
+                    : 'Usa el endpoint del proveedor cloud. Escribe /img tu prompt o frases como "genera una imagen de…" para activarlo.'}
+                </p>
+              </>
+            )}
+          </section>
+
+          {/* ── Voice Chat ───────────────────────────────────────────────────── */}
+          <section className="space-y-2 border border-kawaii-surface-3 rounded-xl p-3 bg-kawaii-surface-2">
+            <div className="flex items-center gap-2">
+              <span className="text-kawaii-teal">🎤</span>
+              <label className="text-sm font-bold text-kawaii-text">Chat de voz</label>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-kawaii-text">
+              <input
+                type="checkbox"
+                checked={settings.voiceInputEnabled}
+                onChange={(e) => update({ voiceInputEnabled: e.target.checked })}
+                className="accent-kawaii-pink"
+              />
+              Activar entrada por voz (micrófono)
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-kawaii-text">
+              <input
+                type="checkbox"
+                checked={settings.voiceAutoSend}
+                onChange={(e) => update({ voiceAutoSend: e.target.checked })}
+                className="accent-kawaii-pink"
+              />
+              Auto-enviar al terminar dictado
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-kawaii-text">
+              <input
+                type="checkbox"
+                checked={settings.voiceOutputEnabled}
+                onChange={(e) => update({ voiceOutputEnabled: e.target.checked })}
+                className="accent-kawaii-pink"
+              />
+              Activar lectura de respuestas (TTS)
+            </label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Idioma de voz</label>
+                <select
+                  value={settings.voiceLanguage}
+                  onChange={(e) => update({ voiceLanguage: e.target.value })}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                >
+                  <option value="es-ES">Español (España)</option>
+                  <option value="es-MX">Español (México)</option>
+                  <option value="en-US">English (US)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Velocidad TTS</label>
+                <input
+                  type="number"
+                  min={0.5}
+                  max={1.5}
+                  step={0.1}
+                  value={settings.voiceRate}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    if (!Number.isFinite(v)) return
+                    update({ voiceRate: Math.max(0.5, Math.min(1.5, v)) })
+                  }}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Voz TTS</label>
+                <select
+                  value={settings.voiceName}
+                  onChange={(e) => update({ voiceName: e.target.value })}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                >
+                  <option value="">Auto natural</option>
+                  {availableVoices.map(voice => (
+                    <option key={`${voice.name}:${voice.lang}`} value={voice.name}>
+                      {voice.name} ({voice.lang}){voice.default ? ' - default' : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Tono TTS</label>
+                <input
+                  type="number"
+                  min={0.8}
+                  max={1.3}
+                  step={0.1}
+                  value={settings.voicePitch}
+                  onChange={(e) => {
+                    const v = Number(e.target.value)
+                    if (!Number.isFinite(v)) return
+                    update({ voicePitch: Math.max(0.8, Math.min(1.3, v)) })
+                  }}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-kawaii-dim leading-relaxed">
+              STT/TTS usa APIs del runtime Chromium/Electron. Si el micrófono no responde, la app intentará pedir permiso explícito antes de iniciar el dictado.
+            </p>
+          </section>
+
+          {/* ── System prompt ───────────────────────────────────────────────── */}
+          <section className="space-y-2">
+            <label className="block text-sm font-bold text-kawaii-text">System Prompt</label>
+            <textarea
+              value={settings.systemPrompt}
+              onChange={(e) => update({ systemPrompt: e.target.value })}
+              rows={4}
+              className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm leading-relaxed focus:outline-none focus:border-kawaii-purple"
+            />
+          </section>
+
+          {/* ── Generation options ──────────────────────────────────────────── */}
+          <section className="space-y-3">
+            <div>
+              <label className="block text-sm font-bold text-kawaii-text mb-1">Temperature: {settings.temperature.toFixed(2)}</label>
+              <input
+                type="range" min="0" max="1.5" step="0.05"
+                value={settings.temperature}
+                onChange={(e) => update({ temperature: Number(e.target.value) })}
+                className="w-full"
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 text-sm text-kawaii-text col-span-2">
+                <input type="checkbox" checked={settings.streamResponses}
+                  onChange={(e) => update({ streamResponses: e.target.checked })} />
+                Stream — mostrar tokens en tiempo real
+              </label>
+              <label className="flex items-center gap-2 text-sm text-kawaii-text col-span-2">
+                <input type="checkbox" checked={settings.webSearchEnabled}
+                  onChange={(e) => update({ webSearchEnabled: e.target.checked })} />
+                Web search context en prompts de noticias/actualidad
+              </label>
+              <label className="flex items-center gap-2 text-sm text-kawaii-text col-span-2">
+                <input type="checkbox" checked={settings.autoFailover}
+                  onChange={(e) => update({ autoFailover: e.target.checked })} className="accent-kawaii-teal" />
+                Auto-failover: si cloud falla, usar modelo local automáticamente
+              </label>
+              <label className="flex items-center gap-2 text-sm text-kawaii-text col-span-2">
+                <input type="checkbox" checked={settings.prioritizeUnrestricted}
+                  onChange={(e) => update({ prioritizeUnrestricted: e.target.checked })} className="accent-kawaii-pink" />
+                Priorizar cero restricciones en ruteo inteligente
+              </label>
+              <label className="flex items-center gap-2 text-sm text-kawaii-text col-span-2">
+                <input type="checkbox" checked={settings.preferFreeTier}
+                  onChange={(e) => update({ preferFreeTier: e.target.checked })} className="accent-kawaii-purple" />
+                Priorizar modelos gratis/rápidos cuando sea posible
+              </label>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Local Max Tokens</label>
+                <input type="number" min="64" max="4096" value={settings.localMaxTokens}
+                  onChange={(e) => update({ localMaxTokens: Number(e.target.value) || 400 })}
+                  className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Cloud Max Tokens</label>
+                <input type="number" min="64" max="128000" value={settings.cloudMaxTokens}
+                  onChange={(e) => update({ cloudMaxTokens: Number(e.target.value) || 1200 })}
+                  className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Long-prompt threshold (chars)</label>
+                <input type="number" min="100" max="5000" value={settings.smartLongPromptThreshold}
+                  onChange={(e) => update({ smartLongPromptThreshold: Number(e.target.value) || 700 })}
+                  className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2 text-sm" />
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Web search max results</label>
+                <input type="number" min="1" max="10" value={settings.webSearchMaxResults}
+                  onChange={(e) => update({ webSearchMaxResults: Number(e.target.value) || 5 })}
+                  className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2 text-sm" />
+              </div>
+            </div>
+          </section>
+
+          {/* ── Actions ─────────────────────────────────────────────────────── */}
+          <section className="flex justify-between pt-2">
+            <button
+              onClick={() => { reset(); setApiKey(''); setAdditionalKeys({}); void setProviderApiKey('') }}
+              className="px-3 py-2 rounded-lg bg-kawaii-surface-2 border border-kawaii-surface-3 text-kawaii-muted hover:text-kawaii-text"
+            >
+              Reset defaults
+            </button>
+            <button
+              onClick={saveAndClose}
+              className="px-4 py-2 rounded-lg bg-gradient-to-r from-kawaii-pink to-kawaii-purple text-white font-bold hover:opacity-90"
+            >
+              Save &amp; Close
+            </button>
+          </section>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ProviderCard({ icon, title, subtitle, active, onClick }: {
+  icon: React.ReactNode; title: string; subtitle: string; active: boolean; onClick: () => void
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`text-left rounded-xl border px-3 py-3 transition-all ${
+        active
+          ? 'border-kawaii-pink bg-kawaii-surface-2 shadow-lg shadow-kawaii-pink/10'
+          : 'border-kawaii-surface-3 bg-kawaii-surface hover:bg-kawaii-surface-2'
+      }`}
+    >
+      <div className="flex items-center gap-2 text-kawaii-text font-bold text-sm">
+        {icon}<span>{title}</span>
+      </div>
+      <p className="text-[11px] text-kawaii-dim mt-1 leading-relaxed">{subtitle}</p>
+    </button>
+  )
+}
