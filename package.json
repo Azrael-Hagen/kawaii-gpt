@@ -2,6 +2,7 @@
   "name": "kawaii-gpt",
   "version": "0.3.0",
   "description": "Your adorable AI companion — KawaiiGPT",
+  "author": "Azrael",
   "homepage": "https://github.com/Azrael-Hagen/kawaii-gpt",
   "repository": {
     "type": "git",
@@ -56,7 +57,6 @@
     "directories": {
       "output": "dist"
     },
-    "artifactName": "KawaiiGPT-${version}-${os}-${arch}.${ext}",
     "files": [
       "out/**/*"
     ],
@@ -68,6 +68,7 @@
       }
     ],
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "nsis",
@@ -90,6 +91,7 @@
       "repo": "kawaii-gpt"
     },
     "nsis": {
+      "artifactName": "KawaiiGPT-${version}-setup-${arch}.${ext}",
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
@@ -98,6 +100,9 @@
       "installerIcon": "resources/icon.ico",
       "uninstallerIcon": "resources/icon.ico",
       "installerHeaderIcon": "resources/icon.ico"
+    },
+    "portable": {
+      "artifactName": "KawaiiGPT-${version}-portable-${arch}.${ext}"
     },
     "mac": {
       "target": "dmg",
