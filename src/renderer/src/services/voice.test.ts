@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { sanitizeForSpeech } from '@/services/voice'
+import { pickCloudVoiceForLanguage, sanitizeForSpeech } from '@/services/voice'
 
 describe('voice', () => {
   it('sanitizes markdown-heavy content for speech', () => {
@@ -9,5 +9,11 @@ describe('voice', () => {
     expect(out).toContain('const x = 1')
     expect(out).toContain('link')
     expect(out).not.toContain('```')
+  })
+
+  it('picks a high-quality cloud voice for supported languages', () => {
+    expect(pickCloudVoiceForLanguage('es-ES')).toBe('marin')
+    expect(pickCloudVoiceForLanguage('en-US')).toBe('cedar')
+    expect(pickCloudVoiceForLanguage('fr-FR', 'alloy')).toBe('alloy')
   })
 })

@@ -7,10 +7,13 @@
 - Auto image-model selector in Settings for generative workflows
 - Voice configuration expanded with preferred voice and pitch controls for less robotic playback
 - Electron media permission handlers for microphone and speaker selection on trusted app origins
+- Automatic voice output strategy that prefers OpenAI TTS when available and falls back to the best local system voice
+- GitHub repository/release metadata in package build config for executable publishing
 
 ### Changed
 - Smart image generation now skips providers without compatible image endpoints and picks provider-specific image models automatically
 - Voice playback prefers more natural installed voices when available instead of using the raw system default blindly
+- Executable artifact naming and publish target are aligned with the GitHub repository configuration
 
 ### Fixed
 - Reduced 404/resource-not-found errors caused by incompatible image models on providers like Together

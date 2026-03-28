@@ -208,3 +208,21 @@
 **Next steps**:
 - Expose a Smart diagnostics summary showing which image model and voice were auto-selected
 - Add integration tests for microphone permission-denied and image-model-not-found cases
+
+## [CP-11.2] 2026-03-28
+**Status**: Passed
+**Decisions made**:
+- Added automatic TTS strategy that prefers OpenAI `gpt-4o-mini-tts` when a compatible official provider is configured, with fallback to the best installed system voice
+- Prepared package metadata and build publish config for GitHub releases under `Azrael-Hagen/kawaii-gpt`
+
+**Trade-offs**:
+- Cloud-quality voice now depends on an official OpenAI-compatible endpoint with support for `/audio/speech`; otherwise the app falls back locally
+- System voice fallback remains host-dependent, but now sits behind a better selection strategy instead of a blind default
+
+**Debt deferred**:
+- Add optional cloud STT/transcription fallback for environments where browser speech recognition is unstable
+- Add release automation workflow for publishing installer artifacts directly from CI
+
+**Next steps**:
+- Add a release pipeline that publishes tagged builds to GitHub Releases automatically
+- Surface which voice engine was chosen for each playback in diagnostics

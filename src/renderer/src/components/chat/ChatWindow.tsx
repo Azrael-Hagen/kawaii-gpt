@@ -13,7 +13,7 @@ interface Props {
 export default function ChatWindow({ messages, isLoading }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
   const { settings } = useSettingsStore()
-  const { autoSpeakOnce } = useVoiceOutput(settings.voiceLanguage, settings.voiceRate, settings.voicePitch, settings.voiceName)
+  const { autoSpeakOnce } = useVoiceOutput(settings)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -25,7 +25,7 @@ export default function ChatWindow({ messages, isLoading }: Props) {
       .reverse()
       .find(m => m.role === 'assistant' && !m.isStreaming && Boolean(m.content?.trim()))
     if (!latestAssistant) return
-    autoSpeakOnce(latestAssistant.id, latestAssistant.content)
+    void autoSpeakOnce(latestAssistant.id, latestAssistant.content)
   }, [messages, settings.voiceOutputEnabled, autoSpeakOnce])
 
   if (messages.length === 0) {

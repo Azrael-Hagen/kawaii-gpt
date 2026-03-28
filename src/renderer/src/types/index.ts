@@ -157,6 +157,8 @@ export interface Settings extends ProviderSettings, SmartRoutingSettings {
   voiceOutputEnabled: boolean
   voiceAutoSend: boolean
   voiceLanguage: string
+  voiceOutputMode: 'auto' | 'system' | 'openai'
+  voiceCloudVoice: string
   voiceName: string
   voicePitch: number
   voiceRate: number
@@ -196,6 +198,8 @@ export const DEFAULT_SETTINGS: Settings = {
   voiceOutputEnabled: false,
   voiceAutoSend: false,
   voiceLanguage: 'es-ES',
+  voiceOutputMode: 'auto',
+  voiceCloudVoice: 'marin',
   voiceName: '',
   voicePitch: 1,
   voiceRate: 1,

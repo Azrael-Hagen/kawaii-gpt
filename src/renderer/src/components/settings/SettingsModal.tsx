@@ -813,6 +813,19 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
               </div>
             </div>
 
+            <div>
+              <label className="block text-xs text-kawaii-muted mb-1">Modo de salida de voz</label>
+              <select
+                value={settings.voiceOutputMode}
+                onChange={(e) => update({ voiceOutputMode: e.target.value as 'auto' | 'system' | 'openai' })}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+              >
+                <option value="auto">Auto inteligente</option>
+                <option value="openai">Preferir OpenAI TTS</option>
+                <option value="system">Solo voz del sistema</option>
+              </select>
+            </div>
+
             <div className="grid grid-cols-2 gap-2">
               <div>
                 <label className="block text-xs text-kawaii-muted mb-1">Voz TTS</label>
@@ -847,8 +860,23 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
               </div>
             </div>
 
+            {(settings.voiceOutputMode === 'auto' || settings.voiceOutputMode === 'openai') && (
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Voz cloud preferida</label>
+                <select
+                  value={settings.voiceCloudVoice}
+                  onChange={(e) => update({ voiceCloudVoice: e.target.value })}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                >
+                  {['marin', 'cedar', 'alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx', 'sage', 'shimmer', 'verse'].map(voice => (
+                    <option key={voice} value={voice}>{voice}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <p className="text-[11px] text-kawaii-dim leading-relaxed">
-              STT/TTS usa APIs del runtime Chromium/Electron. Si el micrófono no responde, la app intentará pedir permiso explícito antes de iniciar el dictado.
+              Auto inteligente: intenta OpenAI TTS si hay una API oficial disponible; si no, usa la mejor voz local instalada. La voz que escuchas siempre es sintética.
             </p>
           </section>
 

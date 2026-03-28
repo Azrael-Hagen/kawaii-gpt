@@ -69,6 +69,12 @@ export const useSettingsStore = create<SettingsState>()(
         if (typeof merged.voiceLanguage !== 'string') {
           merged.voiceLanguage = DEFAULT_SETTINGS.voiceLanguage
         }
+        if (typeof merged.voiceOutputMode !== 'string') {
+          merged.voiceOutputMode = DEFAULT_SETTINGS.voiceOutputMode
+        }
+        if (typeof merged.voiceCloudVoice !== 'string') {
+          merged.voiceCloudVoice = DEFAULT_SETTINGS.voiceCloudVoice
+        }
         if (typeof merged.voiceName !== 'string') {
           merged.voiceName = DEFAULT_SETTINGS.voiceName
         }

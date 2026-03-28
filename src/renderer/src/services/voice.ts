@@ -1,9 +1,28 @@
 const DEFAULT_LANG = 'es-ES'
+const OPENAI_TTS_MODEL = 'gpt-4o-mini-tts'
+
+let activeAudio: HTMLAudioElement | null = null
 
 export interface AvailableVoice {
   name: string
   lang: string
   default: boolean
+}
+
+export interface SpeakOptions {
+  lang?: string
+  rate?: number
+  pitch?: number
+  voiceName?: string
+}
+
+export interface CloudTtsOptions {
+  baseUrl: string
+  apiKey: string
+  text: string
+  lang?: string
+  voice?: string
+  instructions?: string
 }
 
 export function sanitizeForSpeech(input: string): string {
@@ -81,6 +100,14 @@ export function listSpeechVoices(): AvailableVoice[] {
     lang: v.lang,
     default: v.default,
   }))
+}
+
+export function pickCloudVoiceForLanguage(language: string, preferred?: string): string {
+  if (preferred?.trim()) return preferred.trim()
+  const lower = language.toLowerCase()
+  if (lower.startsWith('es')) return 'marin'
+  if (lower.startsWith('en')) return 'cedar'
+  return 'marin'
 }
 
 function scoreVoice(name: string, lang: string, targetLang: string): number {
@@ -189,10 +216,55 @@ export function speakText(text: string, options?: { lang?: string; rate?: number
   const voice = resolveVoice(utterance.lang, options?.voiceName)
   if (voice) utterance.voice = voice
   window.speechSynthesis.cancel()
+  if (activeAudio) {
+    activeAudio.pause()
+    activeAudio = null
+  }
   window.speechSynthesis.speak(utterance)
 }
 
-export function stopSpeaking(): void {
-  if (!isSpeechSynthesisSupported()) return
+export async function speakTextWithOpenAI(options: CloudTtsOptions): Promise<void> {
+  const clean = sanitizeForSpeech(options.text)
+  if (!clean) return
+
+  const res = await fetch(`${options.baseUrl.replace(/\/+$/, '')}/audio/speech`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${options.apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: OPENAI_TTS_MODEL,
+      voice: pickCloudVoiceForLanguage(options.lang || DEFAULT_LANG, options.voice),
+      input: clean,
+      instructions: options.instructions || 'Speak naturally, warm, and fluid. Avoid robotic pacing.',
+      format: 'mp3',
+    }),
+  })
+
+  if (!res.ok) {
+    const text = await res.text()
+    throw new Error(`Cloud voice error (${res.status}): ${text}`)
+  }
+
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const audio = new Audio(url)
+  activeAudio = audio
   window.speechSynthesis.cancel()
+  await audio.play()
+  audio.onended = () => {
+    URL.revokeObjectURL(url)
+    if (activeAudio === audio) activeAudio = null
+  }
+}
+
+export function stopSpeaking(): void {
+  if (isSpeechSynthesisSupported()) {
+    window.speechSynthesis.cancel()
+  }
+  if (activeAudio) {
+    activeAudio.pause()
+    activeAudio = null
+  }
 }

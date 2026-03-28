@@ -13,7 +13,7 @@ interface Props {
 export default function MessageBubble({ message }: Props) {
   const isUser = message.role === 'user'
   const { settings } = useSettingsStore()
-  const { speak } = useVoiceOutput(settings.voiceLanguage, settings.voiceRate, settings.voicePitch, settings.voiceName)
+  const { speak } = useVoiceOutput(settings)
 
   const onCopy = async () => {
     try {
@@ -53,7 +53,7 @@ export default function MessageBubble({ message }: Props) {
 
         {settings.voiceOutputEnabled && message.content && (
           <button
-            onClick={() => speak(message.content)}
+            onClick={() => { void speak(message.content) }}
             className="absolute right-8 top-2 opacity-0 group-hover:opacity-100 p-1 rounded text-kawaii-muted hover:text-kawaii-teal hover:bg-kawaii-surface-2 transition-all"
             title="Leer en voz alta"
           >
