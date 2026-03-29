@@ -1,5 +1,9 @@
 export async function getProviderApiKey(): Promise<string> {
-  return (await window.api?.getSecret?.('providerApiKey')) ?? ''
+  try {
+    return (await window.api?.getSecret?.('providerApiKey')) ?? ''
+  } catch {
+    return ''
+  }
 }
 
 export async function setProviderApiKey(value: string): Promise<void> {
@@ -7,7 +11,11 @@ export async function setProviderApiKey(value: string): Promise<void> {
 }
 
 export async function getAdditionalProviderKey(id: string): Promise<string> {
-  return (await window.api?.getSecret?.(`ap_${id}_key`)) ?? ''
+  try {
+    return (await window.api?.getSecret?.(`ap_${id}_key`)) ?? ''
+  } catch {
+    return ''
+  }
 }
 
 export async function setAdditionalProviderKey(id: string, value: string): Promise<void> {
@@ -16,5 +24,9 @@ export async function setAdditionalProviderKey(id: string, value: string): Promi
 
 /** Generic lookup — used when providerKeyId is stored on the model object. */
 export async function getSecretKey(keyId: string): Promise<string> {
-  return (await window.api?.getSecret?.(keyId)) ?? ''
+  try {
+    return (await window.api?.getSecret?.(keyId)) ?? ''
+  } catch {
+    return ''
+  }
 }

@@ -359,13 +359,26 @@ export function useChat(models: AIModel[] = []) {
     setIsLoading(true)
     abortRef.current = new AbortController()
 
-    const apiKey = await getProviderApiKey()
     const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
-    const decision = selectRoute(settings, routePrompt)
-    const sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
-    const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
-    const healthyCloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
-    const cloudQueue = healthyCloudQueue.length > 0 ? healthyCloudQueue : builtCloudQueue
+    let apiKey = ''
+    let decision: ReturnType<typeof selectRoute>
+    let sysPrompt = ''
+    let cloudQueue: CloudCfg[] = []
+
+    try {
+      apiKey = await getProviderApiKey()
+      decision = selectRoute(settings, routePrompt)
+      sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
+      const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
+      const healthyCloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
+      cloudQueue = healthyCloudQueue.length > 0 ? healthyCloudQueue : builtCloudQueue
+    } catch (err) {
+      const msg = summarizeProviderError(err)
+      setError(msg)
+      updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
+      setIsLoading(false)
+      return
+    }
 
     const smartShouldPreferCloud = (() => {
       if (settings.provider !== 'smart' || cloudQueue.length === 0) return false
