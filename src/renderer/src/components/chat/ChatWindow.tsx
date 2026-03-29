@@ -17,7 +17,7 @@ export default function ChatWindow({ messages, isLoading }: Props) {
   const { autoSpeakOnce, markAsSpoken } = useVoiceOutput(settings)
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    bottomRef.current?.scrollIntoView({ behavior: isLoading ? 'auto' : 'smooth', block: 'end' })
   }, [messages, isLoading])
 
   useEffect(() => {

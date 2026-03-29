@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import { User, Bot, Copy, FileText, ImageIcon, Volume2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,7 +11,7 @@ interface Props {
   message: Message
 }
 
-export default function MessageBubble({ message }: Props) {
+function MessageBubbleBase({ message }: Props) {
   const isUser = message.role === 'user'
   const { settings } = useSettingsStore()
   const { speak } = useVoiceOutput(settings)
@@ -69,7 +70,11 @@ export default function MessageBubble({ message }: Props) {
         )}
 
         {/* Text content */}
-        {message.content && (
+        {message.content && message.isStreaming && (
+          <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+        )}
+
+        {message.content && !message.isStreaming && (
           <div className="prose-kawaii text-sm">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content || '...'}</ReactMarkdown>
           </div>
@@ -112,6 +117,9 @@ export default function MessageBubble({ message }: Props) {
     </div>
   )
 }
+
+const MessageBubble = memo(MessageBubbleBase)
+export default MessageBubble
 
 function AttachmentCard({
   attachment,

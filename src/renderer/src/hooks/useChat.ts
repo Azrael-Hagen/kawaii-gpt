@@ -27,6 +27,7 @@ interface CloudCfg {
 }
 
 const SOFT_REFUSAL_ERR = 'SOFT_REFUSAL'
+const STREAM_PARTIAL_UPDATE_MS = 48
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
@@ -95,6 +96,30 @@ function toFriendlyImageError(err: unknown): string {
     return 'API key inválida para el proveedor de imagen seleccionado.'
   }
   return raw
+}
+
+function shouldFlushStreamUpdate(chunk: string, lastUpdateAt: number): boolean {
+  if (Date.now() - lastUpdateAt >= STREAM_PARTIAL_UPDATE_MS) return true
+  return /[\n.!?]/.test(chunk)
+}
+
+function createStreamUpdateController(onPartial: (text: string) => void): {
+  push: (accumulatedText: string, chunk: string) => void
+  flush: (accumulatedText: string) => void
+} {
+  let lastUpdateAt = 0
+
+  return {
+    push(accumulatedText, chunk) {
+      if (!shouldFlushStreamUpdate(chunk, lastUpdateAt)) return
+      onPartial(accumulatedText)
+      lastUpdateAt = Date.now()
+    },
+    flush(accumulatedText) {
+      onPartial(accumulatedText)
+      lastUpdateAt = Date.now()
+    },
+  }
 }
 
 async function ensureLegacyClient(settings: Settings, apiKey: string): Promise<LegacyEngineClient> {
@@ -441,13 +466,17 @@ export function useChat(models: AIModel[] = []) {
       try {
         if (settings.streamResponses) {
           let acc = ''
+          const streamUi = createStreamUpdateController((partial) => {
+            updateMessage(convId!, assistantId, partial, true)
+          })
           for await (const chunk of legacyClient.streamChat(
             legacyModel, effectiveMessages, sysPrompt,
             decision.temperature, settings.cloudMaxTokens, abortRef.current!.signal,
           )) {
             acc += chunk
-            updateMessage(convId!, assistantId, acc, true)
+            streamUi.push(acc, chunk)
           }
+          streamUi.flush(acc)
           updateMessage(convId!, assistantId, acc, false, undefined, `kawaii • ${legacyModel}`)
         } else {
           const r = await legacyClient.chat(
@@ -474,13 +503,17 @@ export function useChat(models: AIModel[] = []) {
           try {
             if (settings.streamResponses) {
               let acc = ''
+              const streamUi = createStreamUpdateController((partial) => {
+                updateMessage(convId!, assistantId, partial, true)
+              })
               for await (const chunk of localClient.streamChat(
                 localModel, effectiveMessages, sysPrompt,
                 decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
               )) {
                 acc += chunk
-                updateMessage(convId!, assistantId, acc, true)
+                streamUi.push(acc, chunk)
               }
+              streamUi.flush(acc)
               updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback) • ${localModel}`)
             } else {
               const r = await localClient.chat(
@@ -513,13 +546,17 @@ export function useChat(models: AIModel[] = []) {
       try {
         if (settings.streamResponses) {
           let acc = ''
+          const streamUi = createStreamUpdateController((partial) => {
+            updateMessage(convId!, assistantId, partial, true)
+          })
           for await (const chunk of localClient.streamChat(
             localModel, effectiveMessages, sysPrompt,
             decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
           )) {
             acc += chunk
-            updateMessage(convId!, assistantId, acc, true)
+            streamUi.push(acc, chunk)
           }
+          streamUi.flush(acc)
           updateMessage(convId!, assistantId, acc, false, undefined, `local • ${localModel}`)
         } else {
           const r = await localClient.chat(
@@ -570,13 +607,17 @@ export function useChat(models: AIModel[] = []) {
       try {
         if (settings.streamResponses) {
           let acc = ''
+          const streamUi = createStreamUpdateController((partial) => {
+            updateMessage(convId!, assistantId, partial, true)
+          })
           for await (const chunk of cloudClient.streamChat(
             cfg.model, effectiveMessages, sysPrompt,
             decision.temperature, cfg.maxTokens, abortRef.current!.signal,
           )) {
             acc += chunk
-            updateMessage(convId!, assistantId, acc, true)
+            streamUi.push(acc, chunk)
           }
+          streamUi.flush(acc)
           if (isLikelyPolicyRefusal(acc) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
           }
@@ -636,13 +677,17 @@ export function useChat(models: AIModel[] = []) {
             const legacyClient = await ensureLegacyClient(settings, apiKey)
             if (settings.streamResponses) {
               let acc = ''
+              const streamUi = createStreamUpdateController((partial) => {
+                updateMessage(convId!, assistantId, partial, true)
+              })
               for await (const chunk of legacyClient.streamChat(
                 legacyModel, effectiveMessages, sysPrompt,
                 decision.temperature, settings.cloudMaxTokens, abortRef.current!.signal,
               )) {
                 acc += chunk
-                updateMessage(convId!, assistantId, acc, true)
+                streamUi.push(acc, chunk)
               }
+              streamUi.flush(acc)
               updateMessage(convId!, assistantId, acc, false, undefined, `kawaii (fallback) • ${legacyModel}`)
             } else {
               const r = await legacyClient.chat(
@@ -673,13 +718,17 @@ export function useChat(models: AIModel[] = []) {
           try {
             if (settings.streamResponses) {
               let acc = ''
+              const streamUi = createStreamUpdateController((partial) => {
+                updateMessage(convId!, assistantId, partial, true)
+              })
               for await (const chunk of localClient.streamChat(
                 localModel, effectiveMessages, sysPrompt,
                 decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
               )) {
                 acc += chunk
-                updateMessage(convId!, assistantId, acc, true)
+                streamUi.push(acc, chunk)
               }
+              streamUi.flush(acc)
               updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback) • ${localModel}`)
             } else {
               const r = await localClient.chat(

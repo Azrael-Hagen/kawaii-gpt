@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1] - 2026-03-28
+### Changed
+- Streaming de respuestas ahora actualiza la UI con throttling en lugar de forzar re-render por cada token
+- El render de burbujas en mensajes de assistant en curso usa texto plano durante streaming y aplica markdown completo al finalizar
+- El autoscroll usa comportamiento instantaneo durante streaming para reducir costo de animacion continuo
+
+### Fixed
+- Menor sensacion de congelamiento mientras la IA responde en conversaciones largas o con alta frecuencia de tokens
+- Se evita actualizar `updatedAt` de la conversacion en cada parcial de streaming, reduciendo churn de estado en la barra lateral
+
 ## [0.4.0] - 2026-03-29
 ### Added
 - File attachments in chat with local text extraction, inline previews, and persisted metadata in conversation history

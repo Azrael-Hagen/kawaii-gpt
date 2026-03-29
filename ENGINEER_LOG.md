@@ -263,3 +263,22 @@
 **Next steps**:
 - Add drag-and-drop attachments in the chat window
 - Add an import/export flow for reusable character presets
+
+## [CP-13.1] 2026-03-28
+**Status**: Passed
+**Decisions made**:
+- Added throttled partial updates for streamed assistant output to avoid full React tree work on every token chunk
+- Switched streaming assistant rendering to plain text until completion, deferring markdown parsing to finalized responses
+- Disabled smooth animation during active streaming autoscroll to cut layout/paint overhead
+
+**Trade-offs**:
+- Streaming text may appear slightly less granular than token-by-token paint, but remains responsive and substantially smoother
+- Conversation ordering metadata is now updated at message completion, not per partial token
+
+**Debt deferred**:
+- Add lightweight runtime telemetry (FPS/frame budget and update frequency) for objective before/after measurements in-app
+- Evaluate virtualization for very long chat histories to control render cost at >1k messages
+
+**Next steps**:
+- Add a user-facing toggle for "stream update frequency" in advanced settings
+- Profile markdown render cost by message size and consider incremental markdown rendering strategy

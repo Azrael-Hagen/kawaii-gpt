@@ -193,3 +193,16 @@
 - [x] Tests y build verdes tras integrar adjuntos, personaje y diagnostico de voz
 **Status**: `[x]`
 **Notes**: La estrategia multimodal evita enviar binarios ciegamente a todos los providers; primero extrae texto localmente y solo manda imagenes como payload nativo a modelos probables de vision.
+
+---
+
+## CP-13: Streaming Performance Stabilization
+**Milestone**: Reducir jank/congelamiento percibido durante respuestas en streaming
+**Acceptance Criteria**:
+- [x] El pipeline de streaming evita `updateMessage` por token y usa frecuencia de refresco controlada
+- [x] `MessageBubble` evita parseo markdown costoso mientras el mensaje sigue en streaming
+- [x] El autoscroll no usa animacion smooth en cada parcial de token
+- [x] El store no actualiza metadatos de ordenamiento en cada parcial de streaming
+- [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
+**Status**: `[x]`
+**Notes**: Se priorizo fluidez percibida en UI sin romper rutas local/cloud/legacy ni el comportamiento funcional del stream.

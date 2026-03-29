@@ -106,7 +106,7 @@ export const useChatStore = create<ChatState>()(
                         }
                       : m
                   ),
-                  updatedAt: Date.now(),
+                  updatedAt: isStreaming ? c.updatedAt : Date.now(),
                 }
               : c
           ),
