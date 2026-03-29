@@ -17,7 +17,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'kawaii-gpt-settings',
-      version: 12,
+      version: 13,
       // Merge any persisted state on top of DEFAULT_SETTINGS so new fields
       // always receive their default values when upgrading.
       migrate: (persisted: unknown) => {

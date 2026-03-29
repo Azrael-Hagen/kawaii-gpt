@@ -282,3 +282,22 @@
 **Next steps**:
 - Add a user-facing toggle for "stream update frequency" in advanced settings
 - Profile markdown render cost by message size and consider incremental markdown rendering strategy
+
+## [CP-14.1] 2026-03-29
+**Status**: Passed
+**Decisions made**:
+- Extended `CharacterProfile` with persisted visual identity fields (textual style + optional reference image metadata/data)
+- Added profile-image upload/preview/remove flow in Settings to keep persona authoring inside the existing character workspace
+- Enriched image-generation prompts with character visual guidance and optional multimodal trait extraction from the profile image
+
+**Trade-offs**:
+- Storing a data URL keeps implementation simple and portable, but can increase persisted settings size for large images
+- Multimodal visual extraction improves consistency when available, but still depends on provider/model capabilities
+
+**Debt deferred**:
+- Add image-size validation/compression pipeline before persistence to avoid oversized settings payloads
+- Add deterministic seed/style controls in UI for even stronger visual continuity across generated outputs
+
+**Next steps**:
+- Add import/export for full character presets including visual profile image
+- Add provider-level diagnostics showing when multimodal trait extraction was used vs skipped

@@ -12,10 +12,15 @@ describe('systemPrompt', () => {
       relationship: 'cercana y leal al usuario',
       scenario: 'presencia constante en el chat',
       behaviorRules: 'mantener consistencia emocional',
+      visualIdentityPrompt: 'ojos verdes, pelo castaño ondulado, chaqueta negra elegante',
+      profileImageDataUrl: 'data:image/png;base64,abc123',
+      profileImageName: 'aleia.png',
+      profileImageMimeType: 'image/png',
     })
 
     expect(out).toContain('Aleia')
     expect(out).toContain('compañera virtual romántica')
+    expect(out).toContain('aleia.png')
     expect(out).toContain('Responde con detalle.')
   })
 
@@ -29,6 +34,10 @@ describe('systemPrompt', () => {
       relationship: '',
       scenario: '',
       behaviorRules: '',
+      visualIdentityPrompt: '',
+      profileImageDataUrl: '',
+      profileImageName: '',
+      profileImageMimeType: '',
     })).toBe('')
   })
 })

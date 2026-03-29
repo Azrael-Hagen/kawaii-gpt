@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2 } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload } from 'lucide-react'
 import { useSettingsStore } from '@/store/settingsStore'
 import { OpenAICompatibleClient } from '@/services/aiClient'
 import { listSpeechVoices } from '@/services/voice'
@@ -64,6 +64,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const [legacyRuntimeStatus, setLegacyRuntimeStatus] = useState<{ running: boolean; pid?: number; command?: string; lastError?: string } | null>(null)
   const [legacyRuntimeBusy, setLegacyRuntimeBusy] = useState(false)
   const [availableVoices, setAvailableVoices] = useState<Array<{ name: string; lang: string; default: boolean }>>([])
+  const characterImageInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -296,6 +297,39 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
     } finally {
       setLegacyRuntimeBusy(false)
     }
+  }
+
+  const onCharacterImageSelected: React.ChangeEventHandler<HTMLInputElement> = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    if (!file.type.startsWith('image/')) {
+      event.target.value = ''
+      return
+    }
+
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onerror = () => reject(new Error('No se pudo leer la imagen del personaje.'))
+      reader.onload = () => resolve(String(reader.result || ''))
+      reader.readAsDataURL(file)
+    }).catch(() => '')
+
+    if (!dataUrl) {
+      event.target.value = ''
+      return
+    }
+
+    update({
+      characterProfile: {
+        ...settings.characterProfile,
+        profileImageDataUrl: dataUrl,
+        profileImageName: file.name,
+        profileImageMimeType: file.type || 'image/png',
+      },
+    })
+
+    event.target.value = ''
   }
 
   return (
@@ -1062,6 +1096,75 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                   placeholder="Qué debe mantener siempre, qué evita, cómo reacciona ante ciertos temas."
                 />
               </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-kawaii-muted mb-1">Descripción visual del personaje (opcional)</label>
+              <textarea
+                value={settings.characterProfile.visualIdentityPrompt}
+                onChange={(e) => update({
+                  characterProfile: {
+                    ...settings.characterProfile,
+                    visualIdentityPrompt: e.target.value,
+                  },
+                })}
+                rows={2}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-kawaii-purple"
+                placeholder="Rasgos visuales clave: peinado, color de ojos, estilo, paleta, accesorios, etc."
+              />
+            </div>
+
+            <div className="space-y-2 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface p-2.5">
+              <input
+                ref={characterImageInputRef}
+                type="file"
+                accept="image/*"
+                onChange={onCharacterImageSelected}
+                className="hidden"
+              />
+
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-kawaii-text">Imagen de perfil visual del personaje</span>
+                <button
+                  type="button"
+                  onClick={() => characterImageInputRef.current?.click()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface-2 px-2 py-1 text-xs text-kawaii-text hover:bg-kawaii-surface-3"
+                >
+                  <Upload size={12} />
+                  Cargar imagen
+                </button>
+              </div>
+
+              {settings.characterProfile.profileImageDataUrl ? (
+                <div className="space-y-2">
+                  <img
+                    src={settings.characterProfile.profileImageDataUrl}
+                    alt={settings.characterProfile.profileImageName || 'Perfil del personaje'}
+                    className="max-h-44 rounded-lg border border-kawaii-surface-3"
+                  />
+                  <div className="flex items-center justify-between gap-2 text-[11px] text-kawaii-dim">
+                    <span className="truncate">{settings.characterProfile.profileImageName || 'Imagen cargada'}</span>
+                    <button
+                      type="button"
+                      onClick={() => update({
+                        characterProfile: {
+                          ...settings.characterProfile,
+                          profileImageDataUrl: '',
+                          profileImageName: '',
+                          profileImageMimeType: '',
+                        },
+                      })}
+                      className="underline hover:text-kawaii-text"
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-[11px] text-kawaii-dim leading-relaxed">
+                  Sube una referencia visual del personaje para reforzar consistencia en generación de imágenes.
+                </p>
+              )}
             </div>
 
             <p className="text-[11px] text-kawaii-dim leading-relaxed">

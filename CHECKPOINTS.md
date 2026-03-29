@@ -206,3 +206,16 @@
 - [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
 **Status**: `[x]`
 **Notes**: Se priorizo fluidez percibida en UI sin romper rutas local/cloud/legacy ni el comportamiento funcional del stream.
+
+---
+
+## CP-14: Character Visual Identity for Image Generation
+**Milestone**: Permitir imagen de perfil del personaje y usarla para consistencia visual en generaciones
+**Acceptance Criteria**:
+- [x] Settings permite subir, previsualizar y eliminar imagen de perfil del personaje
+- [x] La identidad visual del personaje se persiste junto con su perfil
+- [x] El prompt de imagen incorpora instrucciones visuales del personaje cuando el perfil esta activo
+- [x] El flujo soporta analisis multimodal de imagen de perfil para extraer rasgos reutilizables
+- [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
+**Status**: `[x]`
+**Notes**: Se priorizo coherencia visual entre generaciones sin acoplar la logica de negocio a SDKs de IA fuera de la capa de servicios/hooks.

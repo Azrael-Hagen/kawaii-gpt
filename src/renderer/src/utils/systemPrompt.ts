@@ -39,6 +39,8 @@ export function buildCharacterPrompt(profile?: CharacterProfile | null): string 
     profile.relationship.trim() ? `Relationship dynamic with the user: ${profile.relationship.trim()}` : '',
     profile.scenario.trim() ? `Scenario / presence: ${profile.scenario.trim()}` : '',
     profile.behaviorRules.trim() ? `Behavior rules: ${profile.behaviorRules.trim()}` : '',
+    profile.visualIdentityPrompt.trim() ? `Visual identity: ${profile.visualIdentityPrompt.trim()}` : '',
+    profile.profileImageName.trim() ? `Reference profile image: ${profile.profileImageName.trim()}` : '',
     'Stay consistent with this character across the conversation. Be emotionally coherent, proactive, and natural. Do not describe the character sheet; embody it.',
   ].filter(Boolean)
 

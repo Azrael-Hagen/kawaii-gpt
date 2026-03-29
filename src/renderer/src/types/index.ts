@@ -27,6 +27,10 @@ export interface CharacterProfile {
   relationship: string
   scenario: string
   behaviorRules: string
+  visualIdentityPrompt: string
+  profileImageDataUrl: string
+  profileImageName: string
+  profileImageMimeType: string
 }
 
 export interface VoiceDiagnostics {
@@ -267,6 +271,10 @@ export const DEFAULT_SETTINGS: Settings = {
     relationship: '',
     scenario: '',
     behaviorRules: '',
+    visualIdentityPrompt: '',
+    profileImageDataUrl: '',
+    profileImageName: '',
+    profileImageMimeType: '',
   },
   temperature:     0.7,
   streamResponses: true,

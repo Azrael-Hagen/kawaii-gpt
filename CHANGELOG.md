@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.2] - 2026-03-29
+### Added
+- Perfil de personaje ahora admite imagen de referencia persistida desde Settings para construir identidad visual consistente
+- Nuevo campo de identidad visual textual para complementar la referencia de imagen cuando se generan prompts de imagen
+
+### Changed
+- La composicion de prompts para generacion de imagen incorpora automaticamente rasgos visuales del personaje cuando el perfil esta activo
+- El flujo de generacion puede resumir la imagen de perfil con una pasada multimodal para reforzar consistencia estetica
+
+### Fixed
+- Se reduce la variacion visual entre generaciones al reutilizar una guia estable de apariencia del personaje
+
 ## [0.4.1] - 2026-03-28
 ### Changed
 - Streaming de respuestas ahora actualiza la UI con throttling en lugar de forzar re-render por cada token

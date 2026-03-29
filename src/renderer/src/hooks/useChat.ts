@@ -14,7 +14,7 @@ import { searchWeb } from '@/services/webSearch'
 import { getProviderApiKey, getSecretKey } from '@/utils/secureSettings'
 import { titleFromMessage } from '@/utils/formatters'
 import { buildSystemPrompt } from '@/utils/systemPrompt'
-import type { AIModel, ChatMessageInput, MessageAttachment, Settings } from '@/types'
+import type { AIModel, CharacterProfile, ChatMessageInput, MessageAttachment, Settings } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -119,6 +119,66 @@ function createStreamUpdateController(onPartial: (text: string) => void): {
       onPartial(accumulatedText)
       lastUpdateAt = Date.now()
     },
+  }
+}
+
+function buildCharacterImageStyleInstruction(profile: CharacterProfile): string {
+  if (!profile.enabled) return ''
+
+  const chunks = [
+    profile.name.trim() ? `Personaje: ${profile.name.trim()}.` : '',
+    profile.identity.trim() ? `Identidad: ${profile.identity.trim()}.` : '',
+    profile.personality.trim() ? `Personalidad: ${profile.personality.trim()}.` : '',
+    profile.visualIdentityPrompt.trim() ? `Guía visual explícita: ${profile.visualIdentityPrompt.trim()}.` : '',
+    'Mantén continuidad visual del personaje entre generaciones: rostro, peinado, paleta y vibra general coherentes.',
+  ].filter(Boolean)
+
+  return chunks.join(' ')
+}
+
+async function buildCharacterAwareImagePrompt(
+  basePrompt: string,
+  profile: CharacterProfile,
+  queue: CloudCfg[],
+): Promise<string> {
+  const styleInstruction = buildCharacterImageStyleInstruction(profile)
+  if (!styleInstruction) return basePrompt
+
+  const composed = `${styleInstruction}\n\nPrompt del usuario: ${basePrompt}`
+  if (!profile.profileImageDataUrl || queue.length === 0) return composed
+
+  const cfg = queue[0]
+  const imageAttachment: MessageAttachment = {
+    id: 'character-profile-image',
+    name: profile.profileImageName || 'character-profile.png',
+    mimeType: profile.profileImageMimeType || 'image/png',
+    size: 0,
+    kind: 'image',
+    dataUrl: profile.profileImageDataUrl,
+  }
+
+  try {
+    const visionClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
+    const visualDescription = await visionClient.chat(
+      cfg.model,
+      [
+        {
+          role: 'user',
+          content: 'Describe rasgos visuales concretos del personaje en la imagen (rostro, pelo, vestimenta, estilo, paleta). Responde en una sola línea útil para prompt de imagen.',
+          attachments: [imageAttachment],
+        },
+      ],
+      'Eres un analista visual de referencias de personaje. Entrega descripción breve, específica y usable para generación de imagen.',
+      0.2,
+      180,
+    )
+
+    const compactVisual = visualDescription.replace(/\s+/g, ' ').trim()
+    if (!compactVisual) return composed
+
+    return `${composed}\n\nReferencia visual de imagen de perfil: ${compactVisual}`
+  } catch {
+    return composed
   }
 }
 
@@ -322,6 +382,11 @@ export function useChat(models: AIModel[] = []) {
       try {
         const queue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
         if (queue.length === 0) throw new Error('No hay proveedor cloud con API key para generar imágenes.')
+        const characterAwarePrompt = await buildCharacterAwareImagePrompt(
+          decision.imagePrompt,
+          settings.characterProfile,
+          queue,
+        )
 
         let lastError: string | null = null
 
@@ -368,11 +433,11 @@ export function useChat(models: AIModel[] = []) {
 
             try {
               const imgClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
-              const imageUrl = await imgClient.generateImage(decision.imagePrompt, imageModel)
+              const imageUrl = await imgClient.generateImage(characterAwarePrompt, imageModel)
               updateMessage(
                 convId,
                 assistantId,
-                `Imagen generada: *"${decision.imagePrompt}"*`,
+                `Imagen generada: *"${decision.imagePrompt}"*${settings.characterProfile.enabled ? ' con perfil visual de personaje' : ''}`,
                 false,
                 imageUrl,
                 `imagen • ${cfg.label} • ${imageModel}`,
