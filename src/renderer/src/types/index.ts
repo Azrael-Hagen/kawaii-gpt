@@ -58,11 +58,20 @@ export interface Message {
   routeInfo?: string   // e.g. "local • qwen2.5:0.5b" or "cloud • gpt-4.1-mini"
 }
 
+export interface UserMemoryFact {
+  id: string
+  key: string
+  value: string
+  sourceMessageId: string
+  updatedAt: number
+}
+
 export interface Conversation {
   id: string
   title: string
   model: string
   messages: Message[]
+  userMemory: UserMemoryFact[]
   createdAt: number
   updatedAt: number
   systemPrompt?: string

@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { Conversation, Message, Role } from '@/types'
+import type { Conversation, Message, Role, UserMemoryFact } from '@/types'
 
 // ── ID generator ─────────────────────────────────────────────────────────────
 
@@ -25,6 +25,7 @@ interface ChatState {
 
   addMessage:    (convId: string, msg: Omit<Message, 'id'>) => string
   updateMessage: (convId: string, msgId: string, content: string, isStreaming?: boolean, imageUrl?: string, routeInfo?: string) => void
+  upsertUserMemory: (convId: string, memory: Omit<UserMemoryFact, 'id' | 'updatedAt'>) => void
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -44,7 +45,7 @@ export const useChatStore = create<ChatState>()(
         const id = genId()
         set(s => ({
           conversations:  [
-            { id, title, model, messages: [], createdAt: Date.now(), updatedAt: Date.now() },
+            { id, title, model, messages: [], userMemory: [], createdAt: Date.now(), updatedAt: Date.now() },
             ...s.conversations,
           ],
           activeId: id,
@@ -66,7 +67,7 @@ export const useChatStore = create<ChatState>()(
       clear: (id) =>
         set(s => ({
           conversations: s.conversations.map(c =>
-            c.id === id ? { ...c, messages: [], updatedAt: Date.now() } : c
+            c.id === id ? { ...c, messages: [], userMemory: [], updatedAt: Date.now() } : c
           ),
         })),
 
@@ -110,6 +111,44 @@ export const useChatStore = create<ChatState>()(
                 }
               : c
           ),
+        })),
+
+      upsertUserMemory: (convId, memory) =>
+        set(s => ({
+          conversations: s.conversations.map(c => {
+            if (c.id !== convId) return c
+
+            const current = c.userMemory ?? []
+            const existing = current.find(item => item.key === memory.key)
+
+            const nextMemory = existing
+              ? current.map(item =>
+                  item.key === memory.key
+                    ? {
+                        ...item,
+                        value: memory.value,
+                        sourceMessageId: memory.sourceMessageId,
+                        updatedAt: Date.now(),
+                      }
+                    : item
+                )
+              : [
+                  ...current,
+                  {
+                    id: genId(),
+                    key: memory.key,
+                    value: memory.value,
+                    sourceMessageId: memory.sourceMessageId,
+                    updatedAt: Date.now(),
+                  },
+                ]
+
+            return {
+              ...c,
+              userMemory: nextMemory,
+              updatedAt: Date.now(),
+            }
+          }),
         })),
     }),
     { name: 'kawaii-gpt-chats', version: 1 }

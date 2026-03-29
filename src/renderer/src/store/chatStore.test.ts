@@ -46,4 +46,41 @@ describe('chatStore', () => {
     expect(stored.attachments).toHaveLength(1)
     expect(stored.attachments?.[0].name).toBe('nota.md')
   })
+
+  it('stores and updates user memory facts per conversation', () => {
+    const conv = useChatStore.getState().create('llama3')
+
+    useChatStore.getState().upsertUserMemory(conv, {
+      key: 'name',
+      value: 'Azrael',
+      sourceMessageId: 'm1',
+    })
+
+    useChatStore.getState().upsertUserMemory(conv, {
+      key: 'name',
+      value: 'Az',
+      sourceMessageId: 'm2',
+    })
+
+    const memory = useChatStore.getState().conversations[0].userMemory
+    expect(memory).toHaveLength(1)
+    expect(memory[0].value).toBe('Az')
+    expect(memory[0].sourceMessageId).toBe('m2')
+  })
+
+  it('clears user memory when conversation is cleared', () => {
+    const conv = useChatStore.getState().create('llama3')
+
+    useChatStore.getState().upsertUserMemory(conv, {
+      key: 'location',
+      value: 'Madrid',
+      sourceMessageId: 'm3',
+    })
+
+    useChatStore.getState().clear(conv)
+    const cleared = useChatStore.getState().conversations[0]
+
+    expect(cleared.messages).toHaveLength(0)
+    expect(cleared.userMemory).toHaveLength(0)
+  })
 })

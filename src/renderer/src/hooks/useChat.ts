@@ -10,6 +10,7 @@ import {
 } from '@/services/cloudCatalog'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
+import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
 import { getProviderApiKey, getSecretKey } from '@/utils/secureSettings'
 import { titleFromMessage } from '@/utils/formatters'
@@ -323,7 +324,7 @@ export function useChat(models: AIModel[] = []) {
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
 
-  const { activeId, addMessage, updateMessage, create, rename } = useChatStore()
+  const { activeId, addMessage, updateMessage, create, rename, upsertUserMemory } = useChatStore()
   const { settings, update: updateSettings } = useSettingsStore()
 
   const sendMessage = useCallback(async (content: string, attachments: MessageAttachment[] = []): Promise<void> => {
@@ -341,7 +342,15 @@ export function useChat(models: AIModel[] = []) {
     let convId = activeId
     if (!convId) convId = create(model)
 
-    addMessage(convId, { role: 'user', content: text, attachments, timestamp: Date.now() })
+    const userMessageId = addMessage(convId, { role: 'user', content: text, attachments, timestamp: Date.now() })
+
+    for (const fact of extractImportantUserFacts(text)) {
+      upsertUserMemory(convId, {
+        key: fact.key,
+        value: fact.value,
+        sourceMessageId: userMessageId,
+      })
+    }
 
     const conv = useChatStore.getState().conversations.find(c => c.id === convId)
     if (conv && conv.messages.length === 1) {
@@ -529,7 +538,11 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Web search context ────────────────────────────────────────────────────
-    let effectiveMessages: ChatMessageInput[] = apiMessages
+    const currentConversation = useChatStore.getState().conversations.find(c => c.id === convId)
+    let effectiveMessages: ChatMessageInput[] = prependUserMemoryContext(
+      apiMessages,
+      currentConversation?.userMemory ?? [],
+    )
     if (decision.useWebSearch) {
       try {
         const web = await searchWeb(text, settings.webSearchMaxResults)
@@ -832,7 +845,7 @@ export function useChat(models: AIModel[] = []) {
     }
 
     setIsLoading(false)
-  }, [isLoading, activeId, settings, models, addMessage, updateMessage, create, rename, updateSettings])
+  }, [isLoading, activeId, settings, models, addMessage, updateMessage, create, rename, upsertUserMemory, updateSettings])
 
   const stopStreaming = useCallback((): void => {
     abortRef.current?.abort()
