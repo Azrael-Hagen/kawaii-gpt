@@ -26,6 +26,8 @@ interface ChatState {
   addMessage:    (convId: string, msg: Omit<Message, 'id'>) => string
   updateMessage: (convId: string, msgId: string, content: string, isStreaming?: boolean, imageUrl?: string, routeInfo?: string) => void
   upsertUserMemory: (convId: string, memory: Omit<UserMemoryFact, 'id' | 'updatedAt'>) => void
+  clearUserMemory: (convId: string) => void
+  removeUserMemoryFact: (convId: string, memoryId: string) => void
 }
 
 // ── Store ─────────────────────────────────────────────────────────────────────
@@ -149,6 +151,28 @@ export const useChatStore = create<ChatState>()(
               updatedAt: Date.now(),
             }
           }),
+        })),
+
+      clearUserMemory: (convId) =>
+        set(s => ({
+          conversations: s.conversations.map(c =>
+            c.id === convId
+              ? { ...c, userMemory: [], updatedAt: Date.now() }
+              : c
+          ),
+        })),
+
+      removeUserMemoryFact: (convId, memoryId) =>
+        set(s => ({
+          conversations: s.conversations.map(c =>
+            c.id === convId
+              ? {
+                  ...c,
+                  userMemory: (c.userMemory ?? []).filter(item => item.id !== memoryId),
+                  updatedAt: Date.now(),
+                }
+              : c
+          ),
         })),
     }),
     { name: 'kawaii-gpt-chats', version: 1 }

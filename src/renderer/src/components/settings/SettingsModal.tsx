@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload } from 'lucide-react'
+import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/store/settingsStore'
+import { useChatStore } from '@/store/chatStore'
 import { OpenAICompatibleClient } from '@/services/aiClient'
 import { listSpeechVoices } from '@/services/voice'
 import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
@@ -57,6 +58,7 @@ interface Props {
 
 export default function SettingsModal({ open, onClose, models, status, onRefreshModels }: Props) {
   const { settings, update, reset } = useSettingsStore()
+  const { activeId, conversations, clearUserMemory, removeUserMemoryFact } = useChatStore()
   const [apiKey, setApiKey] = useState('')
   const [additionalKeys, setAdditionalKeys] = useState<Record<string, string>>({})
   const [checkingCloud, setCheckingCloud] = useState(false)
@@ -82,6 +84,9 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   }, [open])  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null
+
+  const activeConversation = conversations.find(c => c.id === activeId)
+  const activeMemory = activeConversation?.userMemory ?? []
 
   const providerLabel = settings.provider === 'ollama'
     ? 'Ollama Base URL'
@@ -1249,6 +1254,64 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                   className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-2 py-2 text-sm" />
               </div>
             </div>
+          </section>
+
+          {/* ── Local user memory options ─────────────────────────────────── */}
+          <section className="space-y-2">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-bold text-kawaii-text">Memoria local del usuario</label>
+              <span className="text-xs text-kawaii-dim">
+                {activeConversation ? `${activeMemory.length} dato(s) en chat activo` : 'Sin chat activo'}
+              </span>
+            </div>
+
+            {!activeConversation ? (
+              <p className="text-[11px] text-kawaii-dim leading-relaxed">
+                Abre una conversación para ver y administrar su memoria local.
+              </p>
+            ) : activeMemory.length === 0 ? (
+              <p className="text-[11px] text-kawaii-dim leading-relaxed">
+                Aún no hay datos recordados en este chat. Se llenará automáticamente con información explícita del usuario.
+              </p>
+            ) : (
+              <div className="space-y-2">
+                <div className="max-h-44 overflow-auto rounded-lg border border-kawaii-surface-3 bg-kawaii-surface-2 p-2">
+                  <ul className="space-y-1.5">
+                    {activeMemory.map(item => (
+                      <li key={item.id} className="flex items-center justify-between gap-2 rounded-md border border-kawaii-surface-3 px-2 py-1.5 text-xs">
+                        <div className="min-w-0">
+                          <div className="font-semibold text-kawaii-text truncate">{item.key}</div>
+                          <div className="text-kawaii-dim truncate">{item.value}</div>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => removeUserMemoryFact(activeConversation.id, item.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-kawaii-surface-3 px-2 py-1 text-[11px] text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                        >
+                          <Trash2 size={11} />
+                          Borrar
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => clearUserMemory(activeConversation.id)}
+                    className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-2.5 py-1.5 text-xs text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-2"
+                  >
+                    <Trash2 size={12} />
+                    Borrar memoria del chat activo
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[11px] text-kawaii-dim leading-relaxed">
+              Seguridad: esta memoria vive solo en local y se elimina automáticamente al limpiar o borrar la conversación.
+            </p>
           </section>
 
           {/* ── Actions ─────────────────────────────────────────────────────── */}

@@ -83,4 +83,46 @@ describe('chatStore', () => {
     expect(cleared.messages).toHaveLength(0)
     expect(cleared.userMemory).toHaveLength(0)
   })
+
+  it('removes a specific user memory fact', () => {
+    const conv = useChatStore.getState().create('llama3')
+
+    useChatStore.getState().upsertUserMemory(conv, {
+      key: 'name',
+      value: 'Azrael',
+      sourceMessageId: 'm10',
+    })
+
+    useChatStore.getState().upsertUserMemory(conv, {
+      key: 'location',
+      value: 'Madrid',
+      sourceMessageId: 'm11',
+    })
+
+    const before = useChatStore.getState().conversations[0].userMemory
+    const targetId = before.find(item => item.key === 'name')?.id
+    expect(targetId).toBeTruthy()
+
+    useChatStore.getState().removeUserMemoryFact(conv, targetId!)
+    const after = useChatStore.getState().conversations[0].userMemory
+
+    expect(after).toHaveLength(1)
+    expect(after[0].key).toBe('location')
+  })
+
+  it('clears all user memory without deleting messages', () => {
+    const conv = useChatStore.getState().create('llama3')
+    useChatStore.getState().addMessage(conv, { role: 'user', content: 'hola', timestamp: Date.now() })
+    useChatStore.getState().upsertUserMemory(conv, {
+      key: 'favorite_color',
+      value: 'azul',
+      sourceMessageId: 'm20',
+    })
+
+    useChatStore.getState().clearUserMemory(conv)
+    const current = useChatStore.getState().conversations[0]
+
+    expect(current.messages.length).toBe(1)
+    expect(current.userMemory).toHaveLength(0)
+  })
 })
