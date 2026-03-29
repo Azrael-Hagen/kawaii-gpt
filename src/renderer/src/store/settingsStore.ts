@@ -17,7 +17,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'kawaii-gpt-settings',
-      version: 10,
+      version: 12,
       // Merge any persisted state on top of DEFAULT_SETTINGS so new fields
       // always receive their default values when upgrading.
       migrate: (persisted: unknown) => {
@@ -60,8 +60,14 @@ export const useSettingsStore = create<SettingsState>()(
         if (typeof merged.voiceInputEnabled !== 'boolean') {
           merged.voiceInputEnabled = DEFAULT_SETTINGS.voiceInputEnabled
         }
+        if (typeof merged.voiceInputMode !== 'string') {
+          merged.voiceInputMode = DEFAULT_SETTINGS.voiceInputMode
+        }
         if (typeof merged.voiceOutputEnabled !== 'boolean') {
           merged.voiceOutputEnabled = DEFAULT_SETTINGS.voiceOutputEnabled
+        }
+        if (typeof merged.voiceAutoPlayResponses !== 'boolean') {
+          merged.voiceAutoPlayResponses = DEFAULT_SETTINGS.voiceAutoPlayResponses
         }
         if (typeof merged.voiceAutoSend !== 'boolean') {
           merged.voiceAutoSend = DEFAULT_SETTINGS.voiceAutoSend
@@ -83,6 +89,17 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (typeof merged.voiceRate !== 'number') {
           merged.voiceRate = DEFAULT_SETTINGS.voiceRate
+        }
+        if (typeof merged.voiceDiagnostics === 'undefined') {
+          merged.voiceDiagnostics = DEFAULT_SETTINGS.voiceDiagnostics
+        }
+        if (!merged.characterProfile || typeof merged.characterProfile !== 'object') {
+          merged.characterProfile = DEFAULT_SETTINGS.characterProfile
+        } else {
+          merged.characterProfile = {
+            ...DEFAULT_SETTINGS.characterProfile,
+            ...merged.characterProfile,
+          }
         }
         if (typeof merged.imageGenAutoSelect !== 'boolean') {
           merged.imageGenAutoSelect = DEFAULT_SETTINGS.imageGenAutoSelect

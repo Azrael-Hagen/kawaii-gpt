@@ -61,6 +61,80 @@ describe('aiClient', () => {
     expect(out).toBe('Hello from cloud')
   })
 
+  it('sends attachment context and image inputs to OpenAI-compatible vision models', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ choices: [{ message: { content: 'Vision ok' } }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new OpenAICompatibleClient('https://openrouter.ai/api/v1', 'secret')
+    await client.chat('gpt-5.4-mini', [{
+      role: 'user',
+      content: 'Analiza esto',
+      attachments: [
+        {
+          id: 'txt-1',
+          name: 'nota.md',
+          mimeType: 'text/markdown',
+          size: 24,
+          kind: 'text',
+          extractedText: '# hola mundo',
+          previewText: '# hola mundo',
+        },
+        {
+          id: 'img-1',
+          name: 'captura.png',
+          mimeType: 'image/png',
+          size: 128,
+          kind: 'image',
+          dataUrl: 'data:image/png;base64,ZmFrZQ==',
+        },
+      ],
+    }])
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.messages[0].content[0].text).toContain('Archivo adjunto: nota.md')
+    expect(body.messages[0].content[1].image_url.url).toBe('data:image/png;base64,ZmFrZQ==')
+  })
+
+  it('sends image blobs and text attachment context to Ollama vision models', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ message: { content: 'Local vision ok' } }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new OllamaClient('http://localhost:11434')
+    await client.chat('llava:latest', [{
+      role: 'user',
+      content: 'Describe la imagen',
+      attachments: [
+        {
+          id: 'img-1',
+          name: 'captura.png',
+          mimeType: 'image/png',
+          size: 128,
+          kind: 'image',
+          dataUrl: 'data:image/png;base64,ZmFrZQ==',
+        },
+        {
+          id: 'txt-1',
+          name: 'codigo.ts',
+          mimeType: 'text/plain',
+          size: 40,
+          kind: 'text',
+          extractedText: 'const hello = true',
+          previewText: 'const hello = true',
+        },
+      ],
+    }])
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string)
+    expect(body.messages[0].images).toEqual(['ZmFrZQ=='])
+    expect(body.messages[0].content).toContain('Archivo adjunto: codigo.ts')
+  })
+
   it('sanitizes HTML error payload from provider', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
       ok: false,

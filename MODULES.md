@@ -10,6 +10,18 @@ Public API:
 Purpose:
 - Normalizes local and online chat providers behind a single interface
 
+## services/attachments.ts
+Public API:
+- `createMessageAttachment(file)`
+- `createMessageAttachments(files)`
+- `buildAttachmentContext(attachment)`
+- `buildAttachmentContexts(attachments)`
+- `modelSupportsVision(modelName, provider)`
+- `getImageVisionAttachments(attachments, modelName, provider)`
+
+Purpose:
+- Normalizes uploaded files into persistent chat attachments and adapts them for text-context or multimodal image delivery
+
 ## utils/secureSettings.ts
 Public API:
 - `getProviderApiKey()`
@@ -41,11 +53,15 @@ Public API:
 - `isSpeechRecognitionSupported()`
 - `isSpeechSynthesisSupported()`
 - `startSpeechRecognition(options)`
+- `startAudioRecording(options)`
+- `getResolvedSystemVoiceName(lang, preferredName?)`
 - `speakText(text, options?)`
+- `speakTextWithOpenAI(options)`
+- `transcribeAudioWithOpenAI(options)`
 - `stopSpeaking()`
 
 Purpose:
-- Encapsulates STT/TTS browser APIs with a stable, testable interface
+- Encapsulates browser STT/TTS plus cloud transcription/TTS fallback with a stable, testable interface
 
 ## hooks/useVoiceInput.ts
 Public API:
@@ -96,7 +112,7 @@ Public API:
 
 ## hooks/useChat.ts
 Public API:
-- `sendMessage(content)`
+- `sendMessage(content, attachments?)`
 - `stopStreaming()`
 - `isLoading`
 - `error`
@@ -119,3 +135,4 @@ Public API:
 - `formatTime(ms)`
 - `formatRelativeDate(ms)`
 - `formatModelSize(bytes)`
+- `formatFileSize(bytes)`

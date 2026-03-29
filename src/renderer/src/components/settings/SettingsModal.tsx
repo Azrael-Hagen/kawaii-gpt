@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { X, RefreshCw, Cloud, Server, Plus, Trash2, Image } from 'lucide-react'
+import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2 } from 'lucide-react'
 import { useSettingsStore } from '@/store/settingsStore'
 import { OpenAICompatibleClient } from '@/services/aiClient'
 import { listSpeechVoices } from '@/services/voice'
@@ -77,7 +77,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
     ).then(entries => setAdditionalKeys(Object.fromEntries(entries)))
     setConnectivityResults(settings.cloudConnectivity ?? [])
     setAvailableVoices(listSpeechVoices())
-    window.api.legacyStatus?.().then(setLegacyRuntimeStatus).catch(() => setLegacyRuntimeStatus(null))
+    window.api?.legacyStatus?.().then(setLegacyRuntimeStatus).catch(() => setLegacyRuntimeStatus(null))
   }, [open])  // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!open) return null
@@ -267,7 +267,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
 
   const refreshLegacyRuntimeStatus = async () => {
     try {
-      const s = await window.api.legacyStatus?.()
+      const s = await window.api?.legacyStatus?.()
       if (s) setLegacyRuntimeStatus(s)
     } catch {
       // ignore
@@ -277,7 +277,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const startLegacyRuntime = async () => {
     setLegacyRuntimeBusy(true)
     try {
-      const next = await window.api.legacyStart?.({
+      const next = await window.api?.legacyStart?.({
         command: settings.legacyRuntimeCommand,
         args: settings.legacyRuntimeArgs,
         cwd: settings.legacyRuntimeCwd,
@@ -291,7 +291,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const stopLegacyRuntime = async () => {
     setLegacyRuntimeBusy(true)
     try {
-      const next = await window.api.legacyStop?.()
+      const next = await window.api?.legacyStop?.()
       if (next) setLegacyRuntimeStatus(next)
     } finally {
       setLegacyRuntimeBusy(false)
@@ -762,6 +762,23 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
               Activar entrada por voz (micrófono)
             </label>
 
+            <div>
+              <label className="block text-xs text-kawaii-muted mb-1">Modo de dictado</label>
+              <select
+                value={settings.voiceInputMode}
+                onChange={(e) => update({ voiceInputMode: e.target.value as 'auto' | 'browser' | 'cloud' })}
+                disabled={!settings.voiceInputEnabled}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple disabled:opacity-50"
+              >
+                <option value="auto">Auto inteligente</option>
+                <option value="browser">Solo navegador</option>
+                <option value="cloud">Solo cloud</option>
+              </select>
+              <p className="mt-1 text-[11px] text-kawaii-dim leading-relaxed">
+                Auto usa Web Speech cuando responde bien y cae a transcripción cloud OpenAI-compatible si el runtime no lo soporta.
+              </p>
+            </div>
+
             <label className="flex items-center gap-2 text-sm text-kawaii-text">
               <input
                 type="checkbox"
@@ -776,10 +793,24 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
               <input
                 type="checkbox"
                 checked={settings.voiceOutputEnabled}
-                onChange={(e) => update({ voiceOutputEnabled: e.target.checked })}
+                onChange={(e) => update({
+                  voiceOutputEnabled: e.target.checked,
+                  voiceAutoPlayResponses: e.target.checked ? settings.voiceAutoPlayResponses : false,
+                })}
                 className="accent-kawaii-pink"
               />
-              Activar lectura de respuestas (TTS)
+              Activar texto a voz (TTS manual)
+            </label>
+
+            <label className="flex items-center gap-2 text-sm text-kawaii-text">
+              <input
+                type="checkbox"
+                checked={settings.voiceAutoPlayResponses}
+                disabled={!settings.voiceOutputEnabled}
+                onChange={(e) => update({ voiceAutoPlayResponses: e.target.checked })}
+                className="accent-kawaii-pink"
+              />
+              Leer respuestas automáticamente
             </label>
 
             <div className="grid grid-cols-2 gap-2">
@@ -818,7 +849,8 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
               <select
                 value={settings.voiceOutputMode}
                 onChange={(e) => update({ voiceOutputMode: e.target.value as 'auto' | 'system' | 'openai' })}
-                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                disabled={!settings.voiceOutputEnabled}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple disabled:opacity-50"
               >
                 <option value="auto">Auto inteligente</option>
                 <option value="openai">Preferir OpenAI TTS</option>
@@ -832,7 +864,8 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                 <select
                   value={settings.voiceName}
                   onChange={(e) => update({ voiceName: e.target.value })}
-                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                  disabled={!settings.voiceOutputEnabled}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple disabled:opacity-50"
                 >
                   <option value="">Auto natural</option>
                   {availableVoices.map(voice => (
@@ -850,12 +883,13 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                   max={1.3}
                   step={0.1}
                   value={settings.voicePitch}
+                  disabled={!settings.voiceOutputEnabled}
                   onChange={(e) => {
                     const v = Number(e.target.value)
                     if (!Number.isFinite(v)) return
                     update({ voicePitch: Math.max(0.8, Math.min(1.3, v)) })
                   }}
-                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple disabled:opacity-50"
                 />
               </div>
             </div>
@@ -877,6 +911,161 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
 
             <p className="text-[11px] text-kawaii-dim leading-relaxed">
               Auto inteligente: intenta OpenAI TTS si hay una API oficial disponible; si no, usa la mejor voz local instalada. La voz que escuchas siempre es sintética.
+            </p>
+
+            {settings.voiceDiagnostics && (
+              <div className="rounded-lg border border-kawaii-surface-3 bg-kawaii-surface p-2.5 text-xs text-kawaii-dim">
+                <div className="mb-1 flex items-center gap-2 font-semibold text-kawaii-text">
+                  <Volume2 size={13} className="text-kawaii-teal" />
+                  Ultima voz usada de verdad
+                </div>
+                <div>Motor: <span className="text-kawaii-text">{settings.voiceDiagnostics.lastEngine}</span></div>
+                <div>Voz pedida: <span className="text-kawaii-text">{settings.voiceDiagnostics.lastRequestedVoice || 'auto'}</span></div>
+                <div>Voz resuelta: <span className="text-kawaii-text">{settings.voiceDiagnostics.lastResolvedVoice}</span></div>
+                <div>Idioma: <span className="text-kawaii-text">{settings.voiceDiagnostics.lastLanguage}</span></div>
+                <div>Hora: <span className="text-kawaii-text">{formatTime(settings.voiceDiagnostics.lastAt)}</span></div>
+              </div>
+            )}
+          </section>
+
+          {/* ── Character Builder ─────────────────────────────────────────── */}
+          <section className="space-y-2 border border-kawaii-surface-3 rounded-xl p-3 bg-kawaii-surface-2">
+            <div className="flex items-center gap-2">
+              <Bot size={14} className="text-kawaii-purple" />
+              <label className="text-sm font-bold text-kawaii-text">Personaje / rol persistente</label>
+            </div>
+
+            <label className="flex items-center gap-2 text-sm text-kawaii-text">
+              <input
+                type="checkbox"
+                checked={settings.characterProfile.enabled}
+                onChange={(e) => update({
+                  characterProfile: {
+                    ...settings.characterProfile,
+                    enabled: e.target.checked,
+                  },
+                })}
+                className="accent-kawaii-pink"
+              />
+              Activar personaje específico
+            </label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Nombre</label>
+                <input
+                  type="text"
+                  value={settings.characterProfile.name}
+                  onChange={(e) => update({
+                    characterProfile: {
+                      ...settings.characterProfile,
+                      name: e.target.value,
+                    },
+                  })}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                  placeholder="Ej. Aleia"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Vinculo con el usuario</label>
+                <input
+                  type="text"
+                  value={settings.characterProfile.relationship}
+                  onChange={(e) => update({
+                    characterProfile: {
+                      ...settings.characterProfile,
+                      relationship: e.target.value,
+                    },
+                  })}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs focus:outline-none focus:border-kawaii-purple"
+                  placeholder="Ej. compañera cercana, interest romántico, mentora"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs text-kawaii-muted mb-1">Identidad base</label>
+              <textarea
+                value={settings.characterProfile.identity}
+                onChange={(e) => update({
+                  characterProfile: {
+                    ...settings.characterProfile,
+                    identity: e.target.value,
+                  },
+                })}
+                rows={2}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-kawaii-purple"
+                placeholder="Quién es, qué edad aparenta, qué presencia transmite, qué desea proyectar."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-kawaii-muted mb-1">Personalidad y actitudes</label>
+              <textarea
+                value={settings.characterProfile.personality}
+                onChange={(e) => update({
+                  characterProfile: {
+                    ...settings.characterProfile,
+                    personality: e.target.value,
+                  },
+                })}
+                rows={3}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-kawaii-purple"
+                placeholder="Describe rasgos, intensidad emocional, ternura, sarcasmo, dominancia, dulzura, etc."
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs text-kawaii-muted mb-1">Forma de hablar</label>
+              <textarea
+                value={settings.characterProfile.speakingStyle}
+                onChange={(e) => update({
+                  characterProfile: {
+                    ...settings.characterProfile,
+                    speakingStyle: e.target.value,
+                  },
+                })}
+                rows={2}
+                className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-kawaii-purple"
+                placeholder="Tono, ritmo, palabras favoritas, cercanía, coquetería, formalidad o informalidad."
+              />
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Escenario persistente</label>
+                <textarea
+                  value={settings.characterProfile.scenario}
+                  onChange={(e) => update({
+                    characterProfile: {
+                      ...settings.characterProfile,
+                      scenario: e.target.value,
+                    },
+                  })}
+                  rows={3}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-kawaii-purple"
+                  placeholder="Contexto base donde existe el personaje y desde dónde te responde."
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-kawaii-muted mb-1">Reglas de conducta</label>
+                <textarea
+                  value={settings.characterProfile.behaviorRules}
+                  onChange={(e) => update({
+                    characterProfile: {
+                      ...settings.characterProfile,
+                      behaviorRules: e.target.value,
+                    },
+                  })}
+                  rows={3}
+                  className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-1.5 text-xs leading-relaxed focus:outline-none focus:border-kawaii-purple"
+                  placeholder="Qué debe mantener siempre, qué evita, cómo reacciona ante ciertos temas."
+                />
+              </div>
+            </div>
+
+            <p className="text-[11px] text-kawaii-dim leading-relaxed">
+              Este bloque se inserta en el prompt efectivo antes del prompt manual para hacer la personalidad más consistente y más real a lo largo de toda la conversación.
             </p>
           </section>
 

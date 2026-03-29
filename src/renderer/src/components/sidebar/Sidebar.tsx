@@ -10,7 +10,7 @@ export default function Sidebar() {
   const [appVersion, setAppVersion] = useState('...')
 
   useEffect(() => {
-    window.api.getVersion().then(setAppVersion).catch(() => setAppVersion('dev'))
+    window.api?.getVersion?.().then(setAppVersion).catch(() => setAppVersion('dev'))
   }, [])
 
   const handleNew = () => {

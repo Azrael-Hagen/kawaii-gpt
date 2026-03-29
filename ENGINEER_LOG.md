@@ -226,3 +226,40 @@
 **Next steps**:
 - Add a release pipeline that publishes tagged builds to GitHub Releases automatically
 - Surface which voice engine was chosen for each playback in diagnostics
+
+## [CP-11.3] 2026-03-28
+**Status**: Passed
+**Decisions made**:
+- Split manual TTS availability from automatic playback so opening the app never reads historical assistant messages by surprise
+- Added voice input mode selection (`auto` / `browser` / `cloud`) and a cloud transcription fallback using `/audio/transcriptions` for OpenAI-compatible endpoints
+
+**Trade-offs**:
+- Cloud dictation uses push-to-talk style recording, so it is slightly less immediate than browser dictation but more reliable when Web Speech fails
+- Automatic cloud fallback currently targets official OpenAI-compatible endpoints only, matching the already-supported TTS strategy
+
+**Debt deferred**:
+- Add streaming transcription for long-form dictation instead of stop-and-transcribe
+- Surface the active dictation engine in the chat UI while listening
+
+**Next steps**:
+- Add integration coverage for browser-error to cloud-fallback transition
+- Surface a small microphone-mode badge in the chat input when cloud dictation is active
+
+## [CP-12.1] 2026-03-29
+**Status**: Passed
+**Decisions made**:
+- Added a dedicated attachment normalization layer so generic files are converted into safe persisted metadata, extracted text context, or vision payloads depending on model capability
+- Kept persona authoring structured in Settings instead of forcing everything into a raw system prompt textarea
+- Persisted real TTS playback diagnostics so voice verification is observable after each response, not inferred from preferences alone
+
+**Trade-offs**:
+- Binary documents without local extraction are represented as metadata only in this release; that preserves compatibility, but not deep file parsing for PDFs or office formats yet
+- Vision capability detection is heuristic by provider/model family, which is robust enough for current targets but not a formal capability handshake
+
+**Debt deferred**:
+- Add extraction for PDFs, DOCX, and spreadsheet formats
+- Add per-message UI badges for which attachments were truly processed as vision inputs vs text-only context
+
+**Next steps**:
+- Add drag-and-drop attachments in the chat window
+- Add an import/export flow for reusable character presets

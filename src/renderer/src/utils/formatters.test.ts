@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { truncate, titleFromMessage, formatModelSize } from '@/utils/formatters'
+import { truncate, titleFromMessage, formatFileSize, formatModelSize } from '@/utils/formatters'
 
 describe('formatters', () => {
   it('truncate keeps short strings', () => {
@@ -17,5 +17,10 @@ describe('formatters', () => {
   it('formatModelSize renders GB/MB', () => {
     expect(formatModelSize(1_073_741_824)).toContain('GB')
     expect(formatModelSize(1_048_576)).toContain('MB')
+  })
+
+  it('formatFileSize renders bytes and KB', () => {
+    expect(formatFileSize(512)).toBe('512 B')
+    expect(formatFileSize(2048)).toBe('2 KB')
   })
 })

@@ -1,8 +1,8 @@
-import { User, Bot, Copy, ImageIcon, Volume2 } from 'lucide-react'
+import { User, Bot, Copy, FileText, ImageIcon, Volume2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Message } from '@/types'
-import { formatTime } from '@/utils/formatters'
+import { formatFileSize, formatTime } from '@/utils/formatters'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useVoiceOutput } from '@/hooks/useVoiceOutput'
 
@@ -27,7 +27,14 @@ export default function MessageBubble({ message }: Props) {
     return (
       <div className="flex justify-end animate-slide-up group">
         <div className="max-w-[80%] rounded-2xl px-4 py-3 user-bubble-bg text-white shadow-lg relative">
-          <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+          {message.content && <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="mt-3 space-y-2">
+              {message.attachments.map((attachment) => (
+                <AttachmentCard key={attachment.id} messageRole="user" attachment={attachment} />
+              ))}
+            </div>
+          )}
           <div className="flex items-center justify-end gap-1 mt-1.5 text-[10px] text-white/70">
             <User size={10} />
             <span>{formatTime(message.timestamp)}</span>
@@ -68,6 +75,14 @@ export default function MessageBubble({ message }: Props) {
           </div>
         )}
 
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="mt-3 space-y-2">
+            {message.attachments.map((attachment) => (
+              <AttachmentCard key={attachment.id} messageRole="assistant" attachment={attachment} />
+            ))}
+          </div>
+        )}
+
         {/* Generated image */}
         {message.imageUrl && (
           <div className="mt-3">
@@ -94,6 +109,50 @@ export default function MessageBubble({ message }: Props) {
           <span>{formatTime(message.timestamp)}</span>
         </div>
       </div>
+    </div>
+  )
+}
+
+function AttachmentCard({
+  attachment,
+  messageRole,
+}: {
+  attachment: Message['attachments'][number]
+  messageRole: 'user' | 'assistant'
+}) {
+  if (!attachment) return null
+
+  const shellClass = messageRole === 'user'
+    ? 'border-white/20 bg-white/10 text-white'
+    : 'border-kawaii-surface-3 bg-kawaii-surface-2 text-kawaii-text'
+  const mutedClass = messageRole === 'user' ? 'text-white/70' : 'text-kawaii-dim'
+
+  return (
+    <div className={`rounded-xl border px-3 py-2 ${shellClass}`}>
+      <div className="flex items-center gap-2 text-xs font-medium">
+        {attachment.kind === 'image' ? <ImageIcon size={13} /> : <FileText size={13} />}
+        <span className="truncate">{attachment.name}</span>
+        <span className={mutedClass}>{formatFileSize(attachment.size)}</span>
+      </div>
+
+      {attachment.kind === 'image' && attachment.dataUrl && (
+        <img
+          src={attachment.dataUrl}
+          alt={attachment.name}
+          className="mt-2 rounded-lg max-h-56 border border-black/10"
+        />
+      )}
+
+      {attachment.kind === 'text' && (attachment.previewText || attachment.extractedText) && (
+        <p className={`mt-2 whitespace-pre-wrap text-xs leading-relaxed ${mutedClass}`}>
+          {attachment.previewText || attachment.extractedText}
+          {attachment.isTruncated ? '…' : ''}
+        </p>
+      )}
+
+      {attachment.kind === 'binary' && attachment.unsupportedReason && (
+        <p className={`mt-2 text-xs leading-relaxed ${mutedClass}`}>{attachment.unsupportedReason}</p>
+      )}
     </div>
   )
 }

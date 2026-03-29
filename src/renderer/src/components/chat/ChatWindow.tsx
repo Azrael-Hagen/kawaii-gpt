@@ -12,21 +12,29 @@ interface Props {
 
 export default function ChatWindow({ messages, isLoading }: Props) {
   const bottomRef = useRef<HTMLDivElement>(null)
+  const hydratedRef = useRef(false)
   const { settings } = useSettingsStore()
-  const { autoSpeakOnce } = useVoiceOutput(settings)
+  const { autoSpeakOnce, markAsSpoken } = useVoiceOutput(settings)
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
 
   useEffect(() => {
-    if (!settings.voiceOutputEnabled) return
     const latestAssistant = [...messages]
       .reverse()
       .find(m => m.role === 'assistant' && !m.isStreaming && Boolean(m.content?.trim()))
     if (!latestAssistant) return
+
+    if (!hydratedRef.current) {
+      hydratedRef.current = true
+      markAsSpoken(latestAssistant.id)
+      return
+    }
+
+    if (!settings.voiceOutputEnabled || !settings.voiceAutoPlayResponses) return
     void autoSpeakOnce(latestAssistant.id, latestAssistant.content)
-  }, [messages, settings.voiceOutputEnabled, autoSpeakOnce])
+  }, [messages, settings.voiceAutoPlayResponses, settings.voiceOutputEnabled, autoSpeakOnce, markAsSpoken])
 
   if (messages.length === 0) {
     return (

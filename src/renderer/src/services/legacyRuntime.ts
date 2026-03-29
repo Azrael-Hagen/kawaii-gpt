@@ -27,18 +27,18 @@ export async function ensureLegacyRuntimeReady(
 ): Promise<{ ready: boolean; status: LegacyRuntimeSnapshot | null }> {
   const client = new LegacyEngineClient(settings.legacyEngineBaseUrl, apiKey)
   if (await client.checkConnection()) {
-    const status = await window.api.legacyStatus?.().catch(() => null)
+    const status = await window.api?.legacyStatus?.().catch(() => null)
     return { ready: true, status: status ?? null }
   }
 
-  const status = await window.api.legacyStatus?.().catch(() => null)
-  if (!isLocalLegacyEndpoint(settings.legacyEngineBaseUrl) || !window.api.legacyStart) {
+  const status = await window.api?.legacyStatus?.().catch(() => null)
+  if (!isLocalLegacyEndpoint(settings.legacyEngineBaseUrl) || !window.api?.legacyStart) {
     return { ready: false, status: status ?? null }
   }
 
   const next = status?.running
     ? status
-    : await window.api.legacyStart({
+    : await window.api?.legacyStart?.({
         command: settings.legacyRuntimeCommand,
         args: settings.legacyRuntimeArgs,
         cwd: settings.legacyRuntimeCwd,

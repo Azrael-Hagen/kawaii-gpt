@@ -14,7 +14,7 @@ import { searchWeb } from '@/services/webSearch'
 import { getProviderApiKey, getSecretKey } from '@/utils/secureSettings'
 import { titleFromMessage } from '@/utils/formatters'
 import { buildSystemPrompt } from '@/utils/systemPrompt'
-import type { AIModel, OllamaMessage, Settings } from '@/types'
+import type { AIModel, ChatMessageInput, MessageAttachment, Settings } from '@/types'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -241,9 +241,9 @@ export function useChat(models: AIModel[] = []) {
   const { activeId, addMessage, updateMessage, create, rename } = useChatStore()
   const { settings, update: updateSettings } = useSettingsStore()
 
-  const sendMessage = useCallback(async (content: string): Promise<void> => {
+  const sendMessage = useCallback(async (content: string, attachments: MessageAttachment[] = []): Promise<void> => {
     const text = content.trim()
-    if (!text || isLoading) return
+    if ((!text && attachments.length === 0) || isLoading) return
 
     setError(null)
 
@@ -256,14 +256,16 @@ export function useChat(models: AIModel[] = []) {
     let convId = activeId
     if (!convId) convId = create(model)
 
-    addMessage(convId, { role: 'user', content: text, timestamp: Date.now() })
+    addMessage(convId, { role: 'user', content: text, attachments, timestamp: Date.now() })
 
     const conv = useChatStore.getState().conversations.find(c => c.id === convId)
-    if (conv && conv.messages.length === 1) rename(convId, titleFromMessage(text))
+    if (conv && conv.messages.length === 1) {
+      rename(convId, titleFromMessage(text || attachments[0]?.name || 'Nuevo chat'))
+    }
 
-    const apiMessages: OllamaMessage[] = (
+    const apiMessages: ChatMessageInput[] = (
       useChatStore.getState().conversations.find(c => c.id === convId)?.messages ?? []
-    ).map(m => ({ role: m.role, content: m.content }))
+    ).map(m => ({ role: m.role, content: m.content, attachments: m.attachments }))
 
     const assistantId = addMessage(convId, {
       role: 'assistant', content: '', timestamp: Date.now(), isStreaming: true,
@@ -273,15 +275,16 @@ export function useChat(models: AIModel[] = []) {
     abortRef.current = new AbortController()
 
     const apiKey = await getProviderApiKey()
-    const decision = selectRoute(settings, text)
-    const sysPrompt = buildSystemPrompt(settings.systemPrompt)
-    const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, text, decision.maxTokens)
+    const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
+    const decision = selectRoute(settings, routePrompt)
+    const sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
+    const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
     const healthyCloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
     const cloudQueue = healthyCloudQueue.length > 0 ? healthyCloudQueue : builtCloudQueue
 
     const smartShouldPreferCloud = (() => {
       if (settings.provider !== 'smart' || cloudQueue.length === 0) return false
-      const lower = text.toLowerCase()
+      const lower = routePrompt.toLowerCase()
       if (lower.length < 28 && /hola|hey|gracias|ok|vale/.test(lower)) return false
       return true
     })()
@@ -292,7 +295,7 @@ export function useChat(models: AIModel[] = []) {
     if (decision.generateImage && settings.imageGenEnabled) {
       updateMessage(convId, assistantId, 'Generando imagen... ✨', true)
       try {
-        const queue = await buildCloudQueue(settings, models, apiKey, model, text, decision.maxTokens)
+        const queue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
         if (queue.length === 0) throw new Error('No hay proveedor cloud con API key para generar imágenes.')
 
         let lastError: string | null = null
@@ -423,7 +426,7 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Web search context ────────────────────────────────────────────────────
-    let effectiveMessages = apiMessages
+    let effectiveMessages: ChatMessageInput[] = apiMessages
     if (decision.useWebSearch) {
       try {
         const web = await searchWeb(text, settings.webSearchMaxResults)
@@ -574,7 +577,7 @@ export function useChat(models: AIModel[] = []) {
             acc += chunk
             updateMessage(convId!, assistantId, acc, true)
           }
-          if (isLikelyPolicyRefusal(acc) && isLikelyBenignPrompt(text) && idx < cloudQueue.length - 1) {
+          if (isLikelyPolicyRefusal(acc) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
           }
           updateMessage(convId!, assistantId, acc, false, undefined, cfg.label)
@@ -582,7 +585,7 @@ export function useChat(models: AIModel[] = []) {
           const r = await cloudClient.chat(
             cfg.model, effectiveMessages, sysPrompt, decision.temperature, cfg.maxTokens,
           )
-          if (isLikelyPolicyRefusal(r) && isLikelyBenignPrompt(text) && idx < cloudQueue.length - 1) {
+          if (isLikelyPolicyRefusal(r) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
           }
           updateMessage(convId!, assistantId, r, false, undefined, cfg.label)

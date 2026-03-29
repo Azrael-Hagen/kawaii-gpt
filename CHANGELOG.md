@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.4.0] - 2026-03-29
+### Added
+- File attachments in chat with local text extraction, inline previews, and persisted metadata in conversation history
+- Vision-aware payload shaping so compatible cloud and Ollama models can inspect attached images directly
+- Structured character builder in Settings for persistent persona, attitude, speaking style, and scenario control
+- Voice diagnostics in Settings showing the actual engine and voice resolved during the latest playback
+
+### Changed
+- Effective system prompt now composes unrestricted core instructions, optional character profile, and user system prompt together
+- Chat input can send attachment-only turns and names the conversation from the first attached file when needed
+- TTS observability now records the requested voice and the voice that was really used
+
+### Fixed
+- Reduced ambiguity around whether the selected voice was actually respected during playback
+- Preserved provider compatibility by sending extracted text for generic files and true multimodal image data only to likely vision-capable targets
+
 ## [0.3.0] - 2026-03-28
 ### Added
 - Strategic Smart orchestration now includes the Kawaii engine as a first-class route and failover target

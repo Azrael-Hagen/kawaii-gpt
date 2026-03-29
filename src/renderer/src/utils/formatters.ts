@@ -43,3 +43,9 @@ export function formatModelSize(bytes: number): string {
   const gb = bytes / 1_073_741_824
   return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1_048_576).toFixed(0)} MB`
 }
+
+export function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(0)} KB`
+  return formatModelSize(bytes)
+}

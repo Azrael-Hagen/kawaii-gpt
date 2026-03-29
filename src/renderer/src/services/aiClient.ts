@@ -1,12 +1,15 @@
 import type {
   AIModel,
+  ChatMessageInput,
   ChatClient,
   OpenAICompatibleChatChunk,
   OpenAICompatibleChatResponse,
   OpenAICompatibleModelResponse,
+  OllamaMessage,
   ProviderSettings,
   Role,
 } from '@/types'
+import { buildAttachmentContexts, getImageVisionAttachments } from '@/services/attachments'
 
 const TIMEOUT_MS = 3_000
 const MAX_ERROR_SNIPPET = 220
@@ -73,6 +76,68 @@ async function readErrorPayload(res: Response): Promise<string> {
   return sanitizeErrorPayload(text)
 }
 
+function stripDataUrlPrefix(dataUrl: string): string {
+  return dataUrl.includes(',') ? dataUrl.split(',')[1] : dataUrl
+}
+
+function buildMessageText(message: ChatMessageInput): string {
+  const content = message.content.trim()
+  const attachments = buildAttachmentContexts(message.attachments)
+  return [content, attachments].filter(Boolean).join('\n\n') || 'Analiza los adjuntos proporcionados.'
+}
+
+function buildOllamaMessages(model: string, messages: ChatMessageInput[], systemPrompt?: string): OllamaMessage[] {
+  const fullMessages = systemPrompt
+    ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
+    : messages
+
+  return fullMessages.map(message => {
+    const images = getImageVisionAttachments(message.attachments, model, 'ollama')
+      .map(attachment => stripDataUrlPrefix(attachment.dataUrl || ''))
+      .filter(Boolean)
+
+    return {
+      role: message.role,
+      content: buildMessageText(message),
+      ...(images.length > 0 ? { images } : {}),
+    }
+  })
+}
+
+function buildOpenAICompatibleMessages(
+  model: string,
+  messages: ChatMessageInput[],
+  provider: 'openai-compatible' | 'legacy-engine',
+  systemPrompt?: string,
+): Array<{ role: Role; content: string | Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string; detail: 'auto' } }> }> {
+  const fullMessages = systemPrompt
+    ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
+    : messages
+
+  return fullMessages.map(message => {
+    const text = buildMessageText(message)
+    const images = getImageVisionAttachments(message.attachments, model, provider)
+
+    if (images.length === 0) {
+      return { role: message.role, content: text }
+    }
+
+    return {
+      role: message.role,
+      content: [
+        { type: 'text', text },
+        ...images.map(image => ({
+          type: 'image_url' as const,
+          image_url: {
+            url: image.dataUrl || '',
+            detail: 'auto' as const,
+          },
+        })),
+      ],
+    }
+  })
+}
+
 export class OllamaClient implements ChatClient {
   private readonly base: string
 
@@ -114,22 +179,18 @@ export class OllamaClient implements ChatClient {
 
   async *streamChat(
     model: string,
-    messages: Array<{ role: Role; content: string }>,
+    messages: ChatMessageInput[],
     systemPrompt?: string,
     temperature = 0.7,
     maxTokens = 400,
     signal?: AbortSignal,
   ): AsyncGenerator<string, void, unknown> {
-    const fullMessages = systemPrompt
-      ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
-      : messages
-
     const res = await fetch(`${this.base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        messages: fullMessages,
+        messages: buildOllamaMessages(model, messages, systemPrompt),
         stream: true,
         options: { temperature, num_predict: maxTokens },
       }),
@@ -165,21 +226,17 @@ export class OllamaClient implements ChatClient {
 
   async chat(
     model: string,
-    messages: Array<{ role: Role; content: string }>,
+    messages: ChatMessageInput[],
     systemPrompt?: string,
     temperature = 0.7,
     maxTokens = 400,
   ): Promise<string> {
-    const fullMessages = systemPrompt
-      ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
-      : messages
-
     const res = await fetch(`${this.base}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         model,
-        messages: fullMessages,
+        messages: buildOllamaMessages(model, messages, systemPrompt),
         stream: false,
         options: { temperature, num_predict: maxTokens },
       }),
@@ -241,17 +298,13 @@ export class OpenAICompatibleClient implements ChatClient {
 
   async *streamChat(
     model: string,
-    messages: Array<{ role: Role; content: string }>,
+    messages: ChatMessageInput[],
     systemPrompt?: string,
     temperature = 0.7,
     maxTokens = 1200,
     signal?: AbortSignal,
   ): AsyncGenerator<string, void, unknown> {
     if (!this.apiKey) throw new Error('API key is required for online providers.')
-
-    const fullMessages = systemPrompt
-      ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
-      : messages
 
     const res = await fetch(`${this.base}/chat/completions`, {
       method: 'POST',
@@ -261,7 +314,7 @@ export class OpenAICompatibleClient implements ChatClient {
       },
       body: JSON.stringify({
         model,
-        messages: fullMessages,
+        messages: buildOpenAICompatibleMessages(model, messages, 'openai-compatible', systemPrompt),
         stream: true,
         temperature,
         max_tokens: maxTokens,
@@ -311,16 +364,12 @@ export class OpenAICompatibleClient implements ChatClient {
 
   async chat(
     model: string,
-    messages: Array<{ role: Role; content: string }>,
+    messages: ChatMessageInput[],
     systemPrompt?: string,
     temperature = 0.7,
     maxTokens = 1200,
   ): Promise<string> {
     if (!this.apiKey) throw new Error('API key is required for online providers.')
-
-    const fullMessages = systemPrompt
-      ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
-      : messages
 
     const res = await fetch(`${this.base}/chat/completions`, {
       method: 'POST',
@@ -330,7 +379,7 @@ export class OpenAICompatibleClient implements ChatClient {
       },
       body: JSON.stringify({
         model,
-        messages: fullMessages,
+        messages: buildOpenAICompatibleMessages(model, messages, 'openai-compatible', systemPrompt),
         stream: false,
         temperature,
         max_tokens: maxTokens,
@@ -432,22 +481,18 @@ export class LegacyEngineClient implements ChatClient {
 
   async *streamChat(
     model: string,
-    messages: Array<{ role: Role; content: string }>,
+    messages: ChatMessageInput[],
     systemPrompt?: string,
     temperature = 0.7,
     maxTokens = 1200,
     signal?: AbortSignal,
   ): AsyncGenerator<string, void, unknown> {
-    const fullMessages = systemPrompt
-      ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
-      : messages
-
     const res = await fetch(`${this.base}/chat/completions`, {
       method: 'POST',
       headers: buildAuthHeaders(this.apiKey),
       body: JSON.stringify({
         model,
-        messages: fullMessages,
+        messages: buildOpenAICompatibleMessages(model, messages, 'legacy-engine', systemPrompt),
         stream: true,
         temperature,
         max_tokens: maxTokens,
@@ -497,21 +542,17 @@ export class LegacyEngineClient implements ChatClient {
 
   async chat(
     model: string,
-    messages: Array<{ role: Role; content: string }>,
+    messages: ChatMessageInput[],
     systemPrompt?: string,
     temperature = 0.7,
     maxTokens = 1200,
   ): Promise<string> {
-    const fullMessages = systemPrompt
-      ? [{ role: 'system' as const, content: systemPrompt }, ...messages]
-      : messages
-
     const res = await fetch(`${this.base}/chat/completions`, {
       method: 'POST',
       headers: buildAuthHeaders(this.apiKey),
       body: JSON.stringify({
         model,
-        messages: fullMessages,
+        messages: buildOpenAICompatibleMessages(model, messages, 'legacy-engine', systemPrompt),
         stream: false,
         temperature,
         max_tokens: maxTokens,

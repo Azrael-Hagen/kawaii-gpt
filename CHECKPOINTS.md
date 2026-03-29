@@ -172,6 +172,24 @@
 - [x] La generacion de imagen prueba modelos compatibles antes de rotar de proveedor
 - [x] La reproduccion de voz permite elegir voz, tono y desactivarse por completo
 - [x] El runtime solicita permisos de microfono de forma explicita para dictado
+- [x] El dictado soporta modo auto/browser/cloud con fallback a transcripcion cloud cuando Web Speech no es usable
+- [x] El auto-TTS no reproduce historial al abrir la app y queda desacoplado del TTS manual
 - [x] Tests y build verdes tras los cambios
 **Status**: `[x]`
-**Notes**: La inteligencia ya no se limita al selector principal de IA; ahora alcanza imagen, voz y permisos del runtime.
+**Notes**: La inteligencia ya no se limita al selector principal de IA; ahora alcanza imagen, voz, permisos del runtime y fallback de dictado.
+
+---
+
+## CP-12: Multimodal Persona Workspace
+**Milestone**: Adjuntar archivos, fijar personajes persistentes y auditar la voz realmente usada
+**Acceptance Criteria**:
+- [x] El chat permite adjuntar archivos y persistirlos en el historial
+- [x] Archivos de texto se extraen localmente y se inyectan como contexto reutilizable
+- [x] Imagenes adjuntas se envian como entradas multimodales cuando el modelo/proveedor parece soportar vision
+- [x] `MessageBubble` muestra previews inline para adjuntos de texto e imagen
+- [x] Settings incluye constructor estructurado de personaje persistente
+- [x] El prompt efectivo combina core sin restricciones + personaje + prompt manual
+- [x] La app registra y muestra el motor/voz realmente usados en la ultima reproduccion TTS
+- [x] Tests y build verdes tras integrar adjuntos, personaje y diagnostico de voz
+**Status**: `[x]`
+**Notes**: La estrategia multimodal evita enviar binarios ciegamente a todos los providers; primero extrae texto localmente y solo manda imagenes como payload nativo a modelos probables de vision.
