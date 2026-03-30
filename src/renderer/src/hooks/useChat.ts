@@ -9,7 +9,7 @@ import {
   providerSupportsImageGeneration,
 } from '@/services/cloudCatalog'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
-import { appendErrorLog, createErrorLogEntry } from '@/services/errorDiagnostics'
+import { appendErrorLog, createErrorLogEntry, getLearnedRepairRecommendation, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
@@ -358,15 +358,20 @@ export function useChat(models: AIModel[] = []) {
   const { settings, update: updateSettings } = useSettingsStore()
 
   const logError = useCallback((message: string, options?: { provider?: string; route?: string; autoRepairApplied?: boolean }) => {
-    if (!useSettingsStore.getState().settings.autoErrorAssistEnabled) return
+    const currentSettings = useSettingsStore.getState().settings
+    if (!currentSettings.autoErrorAssistEnabled) return
     const entry = createErrorLogEntry({
       source: 'chat',
       message,
       provider: options?.provider,
       route: options?.route,
       autoRepairApplied: options?.autoRepairApplied,
+      knowledgeBase: currentSettings.errorKnowledgeBase,
     })
-    updateSettings(appendErrorLog(useSettingsStore.getState().settings, entry))
+    updateSettings({
+      ...appendErrorLog(currentSettings, entry),
+      errorKnowledgeBase: updateErrorKnowledgeBase(currentSettings.errorKnowledgeBase, entry),
+    })
   }, [updateSettings])
 
   const sendMessage = useCallback(async (content: string, attachments: MessageAttachment[] = []): Promise<void> => {
@@ -793,6 +798,10 @@ export function useChat(models: AIModel[] = []) {
         }
 
         const errMsg = summarizeProviderError(err)
+        const learnedRepair = getLearnedRepairRecommendation(useSettingsStore.getState().settings, errMsg, {
+          provider: cfg.label,
+          route: 'cloud',
+        })
         logError(errMsg, { provider: cfg.label, route: 'cloud' })
         updateSettings({
           cloudDiagnostics: {
@@ -817,7 +826,44 @@ export function useChat(models: AIModel[] = []) {
         }
 
         // All cloud providers exhausted or non-quota error → kawaii/local auto-failover
-        if (settings.enableLegacyEngine && settings.legacyModel) {
+        const shouldPreferLegacy = learnedRepair.suggestion === 'switch_to_legacy' && (learnedRepair.confidence ?? 0) >= 0.6
+        const shouldPreferLocal = learnedRepair.suggestion === 'switch_to_local' && (learnedRepair.confidence ?? 0) >= 0.6
+
+        if (shouldPreferLocal && settings.autoFailover && settings.localModel) {
+          const localModel = stripPrefix(settings.localModel)
+          const localClient = new OllamaClient(settings.localBaseUrl)
+          updateMessage(convId!, assistantId, `⚡ Aprendizaje local sugiere fallback directo a modelo local (${Math.round((learnedRepair.confidence ?? 0) * 100)}%)...`, true)
+          try {
+            if (settings.streamResponses) {
+              let acc = ''
+              const streamUi = createStreamUpdateController((partial) => {
+                updateMessage(convId!, assistantId, partial, true)
+              })
+              for await (const chunk of localClient.streamChat(
+                localModel, effectiveMessages, sysPrompt,
+                decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
+              )) {
+                acc += chunk
+                streamUi.push(acc, chunk)
+              }
+              streamUi.flush(acc)
+              updateMessage(convId!, assistantId, acc, false, undefined, `local (learned fallback) • ${localModel}`)
+            } else {
+              const r = await localClient.chat(
+                localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+              )
+              updateMessage(convId!, assistantId, r, false, undefined, `local (learned fallback) • ${localModel}`)
+            }
+            logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
+            setIsLoading(false)
+            return
+          } catch (learnedLocalErr) {
+            const learnedLocalMsg = summarizeProviderError(learnedLocalErr)
+            logError(learnedLocalMsg, { provider: settings.localBaseUrl, route: 'cloud->local' })
+          }
+        }
+
+        if ((shouldPreferLegacy || (!shouldPreferLocal && settings.enableLegacyEngine && settings.legacyModel)) && settings.enableLegacyEngine && settings.legacyModel) {
           const legacyModel = stripPrefix(settings.legacyModel)
           updateMessage(convId!, assistantId, `⚠️ Nube sin disponibilidad (${errMsg}) → probando motor Kawaii...`, true)
           try {

@@ -339,3 +339,22 @@
 **Next steps**:
 - Add selective redaction before copying reports if future logs include richer request metadata
 - Add per-provider counters and mini dashboard for recurring failure patterns
+
+## [CP-17.1] 2026-03-30
+**Status**: Passed
+**Decisions made**:
+- Extended the local diagnostics engine with case-based learned repairs so recurrent failures can reuse proven fallback actions without invoking another model
+- Parsed `CHANGELOG.md` into structured release knowledge and ingested it on startup to connect current failures with newly added, changed, or fixed behavior
+- Surfaced learned error cases and version knowledge in Settings so the adaptive behavior remains inspectable instead of hidden
+
+**Trade-offs**:
+- Learned repair confidence is intentionally conservative, so some recoverable cases will still use the default fallback path until enough successful history exists
+- Release-awareness is limited by changelog quality; if a change is undocumented, the local learner cannot infer it from version metadata alone
+
+**Debt deferred**:
+- Add decay/retention rules so stale learned cases lose priority when providers or routes change significantly over time
+- Correlate learned cases with explicit latency and provider reliability metrics instead of success counters alone
+
+**Next steps**:
+- Add a compact explanation badge in chat when a learned fallback was selected automatically
+- Add import/export support for learned diagnostics knowledge if local portability becomes necessary

@@ -203,7 +203,30 @@ export interface ErrorAnalysis {
   suggestedFix: string
   autoRepairTried: boolean
   autoRepairApplied: boolean
+  learnedSuggestion?: string
+  learnedConfidence?: number
   reportMarkdown: string
+}
+
+export interface ErrorKnowledgeCase {
+  id: string
+  fingerprint: string
+  category: ErrorAnalysis['category']
+  provider?: string
+  route?: string
+  recommendedAction: string
+  seenCount: number
+  successCount: number
+  lastSeenAt: number
+}
+
+export interface ReleaseKnowledgeEntry {
+  version: string
+  date: string
+  added: string[]
+  changed: string[]
+  fixed: string[]
+  learnedAt: number
 }
 
 export interface ErrorLogEntry {
@@ -251,6 +274,8 @@ export interface Settings extends ProviderSettings, SmartRoutingSettings {
   cloudConnectivity: CloudConnectivityStatus[]
   autoErrorAssistEnabled: boolean
   errorLogs: ErrorLogEntry[]
+  errorKnowledgeBase: ErrorKnowledgeCase[]
+  releaseKnowledgeBase: ReleaseKnowledgeEntry[]
   lastErrorReport: string | null
   // Multi-provider
   additionalProviders: AdditionalProvider[]
@@ -317,6 +342,8 @@ export const DEFAULT_SETTINGS: Settings = {
   cloudConnectivity: [],
   autoErrorAssistEnabled: true,
   errorLogs: [],
+  errorKnowledgeBase: [],
+  releaseKnowledgeBase: [],
   lastErrorReport: null,
   additionalProviders: [
     { id: 'ap1', name: '', baseUrl: '', enabled: false },

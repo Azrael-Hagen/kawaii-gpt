@@ -244,3 +244,16 @@
 - [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
 **Status**: `[x]`
 **Notes**: Se eligio un analizador heuristico local para no depender de otra llamada de IA cuando la propia app esta en estado de error.
+
+---
+
+## CP-17: Learned Repair Memory & Release Awareness
+**Milestone**: Aprender reparaciones efectivas y cambios por version para mejorar decisiones locales de recuperacion
+**Acceptance Criteria**:
+- [x] La app guarda casos de error exitosos con fingerprint, contexto y accion recomendada reutilizable
+- [x] El flujo de chat puede priorizar automaticamente un fallback aprendido cuando la confianza del caso es alta
+- [x] El changelog se ingiere como conocimiento de release con Added, Changed y Fixed por version
+- [x] Opciones muestra tanto casos aprendidos como resumen de conocimiento por versiones recientes
+- [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
+**Status**: `[x]`
+**Notes**: Se eligio aprendizaje local basado en casos y conocimiento de release para mantener la recuperacion liviana, determinista y util incluso durante fallos de red.

@@ -9,7 +9,8 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChat } from '@/hooks/useChat'
 import { useModels } from '@/hooks/useModels'
-import { appendErrorLog, createErrorLogEntry } from '@/services/errorDiagnostics'
+import { appendErrorLog, createErrorLogEntry, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
+import { ingestReleaseKnowledge } from '@/services/releaseLearning'
 
 export default function App() {
   const [showSettings, setShowSettings] = useState(false)
@@ -28,23 +29,42 @@ export default function App() {
   const { sendMessage, stopStreaming, isLoading, error, clearError } = useChat(models)
 
   useEffect(() => {
+    window.api?.getVersion?.()
+      .then(version => {
+        const currentSettings = useSettingsStore.getState().settings
+        update({ releaseKnowledgeBase: ingestReleaseKnowledge(currentSettings, version) })
+      })
+      .catch(() => undefined)
+  }, [update])
+
+  useEffect(() => {
     if (!settings.autoErrorAssistEnabled) return undefined
 
     const onError = (event: ErrorEvent) => {
+      const currentSettings = useSettingsStore.getState().settings
       const entry = createErrorLogEntry({
         source: 'global',
         message: event.message || 'Unknown renderer error',
+        knowledgeBase: currentSettings.errorKnowledgeBase,
       })
-      update(appendErrorLog(useSettingsStore.getState().settings, entry))
+      update({
+        ...appendErrorLog(currentSettings, entry),
+        errorKnowledgeBase: updateErrorKnowledgeBase(currentSettings.errorKnowledgeBase, entry),
+      })
     }
 
     const onUnhandled = (event: PromiseRejectionEvent) => {
+      const currentSettings = useSettingsStore.getState().settings
       const reason = event.reason instanceof Error ? event.reason.message : String(event.reason)
       const entry = createErrorLogEntry({
         source: 'global',
         message: reason || 'Unhandled promise rejection',
+        knowledgeBase: currentSettings.errorKnowledgeBase,
       })
-      update(appendErrorLog(useSettingsStore.getState().settings, entry))
+      update({
+        ...appendErrorLog(currentSettings, entry),
+        errorKnowledgeBase: updateErrorKnowledgeBase(currentSettings.errorKnowledgeBase, entry),
+      })
     }
 
     window.addEventListener('error', onError)

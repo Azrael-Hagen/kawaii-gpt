@@ -10,6 +10,26 @@ Public API:
 Purpose:
 - Normalizes local and online chat providers behind a single interface
 
+## services/errorDiagnostics.ts
+Public API:
+- `analyzeErrorMessage(...)`
+- `createErrorLogEntry(...)`
+- `appendErrorLog(...)`
+- `updateErrorKnowledgeBase(...)`
+- `getLearnedRepairRecommendation(...)`
+
+Purpose:
+- Captures local diagnostics, classifies failures, and learns reusable repair actions from successful recovery paths
+
+## services/releaseLearning.ts
+Public API:
+- `parseReleaseKnowledge(markdown)`
+- `ingestReleaseKnowledge(settings, currentVersion)`
+- `summarizeReleaseKnowledge(settings, currentVersion)`
+
+Purpose:
+- Turns release notes into structured local knowledge so diagnostics can reason about what changed across app versions
+
 ## services/attachments.ts
 Public API:
 - `createMessageAttachment(file)`

@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.5] - 2026-03-30
+### Added
+- Aprendizaje local de casos de error exitosos con huellas, acciones recomendadas y nivel de confianza reutilizable
+- Ingestion del changelog como conocimiento de versiones para que la app aprenda que se agrego, cambio o corrigio en cada release
+- Nueva vista en Opciones para consultar conocimiento aprendido de errores y resumen de versiones recientes
+
+### Changed
+- La ruta de chat ahora puede priorizar automaticamente un fallback aprendido cuando la confianza historica del caso es suficientemente alta
+- El arranque de la app incorpora conocimiento de releases nuevos al almacen local para ampliar el rango de diagnostico y auto-reparacion
+
+### Fixed
+- Reduce reintentos ciegos ante errores recurrentes al reutilizar reparaciones que ya funcionaron en el mismo contexto
+- Mejora la continuidad del diagnostico local al vincular errores actuales con cambios confirmados en versiones recientes
+
 ## [0.4.4] - 2026-03-30
 ### Added
 - Logger automatico local de errores con captura global de renderer y fallos de chat

@@ -1,6 +1,7 @@
-import type { ErrorAnalysis, ErrorLogEntry, Settings } from '@/types'
+import type { ErrorAnalysis, ErrorKnowledgeCase, ErrorLogEntry, Settings } from '@/types'
 
 const MAX_ERROR_LOGS = 30
+const MAX_ERROR_CASES = 60
 
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -13,8 +14,88 @@ function compact(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-export function analyzeErrorMessage(message: string, context?: { provider?: string; route?: string; autoRepairApplied?: boolean }): ErrorAnalysis {
+function fingerprintError(message: string): string {
+  return compact(message)
+    .toLowerCase()
+    .replace(/https?:\/\/\S+/g, '{url}')
+    .replace(/\b\d{3}\b/g, '{code}')
+    .replace(/\b\d+ms\b/g, '{latency}')
+    .replace(/\b[a-f0-9]{8,}\b/gi, '{id}')
+}
+
+function inferRepairAction(category: ErrorAnalysis['category'], route?: string, autoRepairApplied?: boolean): string {
+  if (autoRepairApplied && route === 'cloud->local') return 'switch_to_local'
+  if (autoRepairApplied && route === 'cloud->legacy') return 'switch_to_legacy'
+  if (autoRepairApplied && route === 'legacy->local') return 'legacy_to_local'
+  if (category === 'auth') return 'check_api_key'
+  if (category === 'model') return 'switch_model'
+  if (category === 'runtime') return 'restart_runtime'
+  if (category === 'network') return 'retry_or_change_provider'
+  if (category === 'timeout') return 'reduce_load_or_retry'
+  if (category === 'policy') return 'rotate_provider'
+  return 'generate_report'
+}
+
+function scoreCase(candidate: ErrorKnowledgeCase, fingerprint: string, category: ErrorAnalysis['category'], provider?: string, route?: string): number {
+  let score = 0
+  if (candidate.fingerprint === fingerprint) score += 6
+  if (candidate.category === category) score += 3
+  if (candidate.provider && provider && candidate.provider === provider) score += 2
+  if (candidate.route && route && candidate.route === route) score += 2
+  score += Math.min(candidate.successCount, 4)
+  return score
+}
+
+function predictRepairFromKnowledgeBase(
+  knowledgeBase: ErrorKnowledgeCase[],
+  fingerprint: string,
+  category: ErrorAnalysis['category'],
+  provider?: string,
+  route?: string,
+): { suggestion?: string; confidence?: number } {
+  if (knowledgeBase.length === 0) return {}
+
+  const ranked = [...knowledgeBase]
+    .map(item => ({ item, score: scoreCase(item, fingerprint, category, provider, route) }))
+    .sort((left, right) => right.score - left.score)
+
+  const best = ranked[0]
+  if (!best || best.score < 5) return {}
+
+  const confidence = Math.min(0.95, Math.max(0.35, best.item.successCount / Math.max(best.item.seenCount, 1)))
+  return {
+    suggestion: best.item.recommendedAction,
+    confidence,
+  }
+}
+
+export function getLearnedRepairRecommendation(
+  settings: Settings,
+  message: string,
+  context?: { provider?: string; route?: string },
+): { suggestion?: string; confidence?: number } {
+  const fingerprint = fingerprintError(message)
+  const analysis = analyzeErrorMessage(message, {
+    provider: context?.provider,
+    route: context?.route,
+    knowledgeBase: settings.errorKnowledgeBase,
+  })
+
+  return predictRepairFromKnowledgeBase(
+    settings.errorKnowledgeBase ?? [],
+    fingerprint,
+    analysis.category,
+    context?.provider,
+    context?.route,
+  )
+}
+
+export function analyzeErrorMessage(
+  message: string,
+  context?: { provider?: string; route?: string; autoRepairApplied?: boolean; knowledgeBase?: ErrorKnowledgeCase[] },
+): ErrorAnalysis {
   const lower = compact(message).toLowerCase()
+  const fingerprint = fingerprintError(message)
 
   let category: ErrorAnalysis['category'] = 'unknown'
   let probableCause = 'Fallo no clasificado en la app o el proveedor.'
@@ -48,6 +129,11 @@ export function analyzeErrorMessage(message: string, context?: { provider?: stri
 
   const autoRepairApplied = Boolean(context?.autoRepairApplied)
   const autoRepairTried = category === 'network' || category === 'timeout' || category === 'runtime' || category === 'policy'
+  const learned = predictRepairFromKnowledgeBase(context?.knowledgeBase ?? [], fingerprint, category, context?.provider, context?.route)
+
+  if (learned.suggestion) {
+    suggestedFix = `Aprendizaje local sugiere: ${learned.suggestion}. ${suggestedFix}`
+  }
 
   const reportMarkdown = [
     '# KawaiiGPT Error Report',
@@ -58,6 +144,7 @@ export function analyzeErrorMessage(message: string, context?: { provider?: stri
     `- Category: ${category}`,
     `- Auto repair tried: ${autoRepairTried ? 'yes' : 'no'}`,
     `- Auto repair applied: ${autoRepairApplied ? 'yes' : 'no'}`,
+    ...(learned.suggestion ? [`- Learned suggestion: ${learned.suggestion}`, `- Learned confidence: ${Math.round((learned.confidence ?? 0) * 100)}%`] : []),
     '',
     '## Error message',
     compact(message),
@@ -75,6 +162,8 @@ export function analyzeErrorMessage(message: string, context?: { provider?: stri
     suggestedFix,
     autoRepairTried,
     autoRepairApplied,
+    learnedSuggestion: learned.suggestion,
+    learnedConfidence: learned.confidence,
     reportMarkdown,
   }
 }
@@ -86,11 +175,13 @@ export function createErrorLogEntry(input: {
   provider?: string
   route?: string
   autoRepairApplied?: boolean
+  knowledgeBase?: ErrorKnowledgeCase[]
 }): ErrorLogEntry {
   const analysis = analyzeErrorMessage(input.message, {
     provider: input.provider,
     route: input.route,
     autoRepairApplied: input.autoRepairApplied,
+    knowledgeBase: input.knowledgeBase,
   })
 
   return {
@@ -104,6 +195,50 @@ export function createErrorLogEntry(input: {
     at: Date.now(),
     analysis,
   }
+}
+
+export function updateErrorKnowledgeBase(
+  knowledgeBase: ErrorKnowledgeCase[],
+  entry: ErrorLogEntry,
+): ErrorKnowledgeCase[] {
+  const fingerprint = fingerprintError(entry.message)
+  const recommendedAction = inferRepairAction(entry.analysis.category, entry.route, entry.analysis.autoRepairApplied)
+  const existing = knowledgeBase.find(item =>
+    item.fingerprint === fingerprint &&
+    item.category === entry.analysis.category &&
+    item.provider === entry.provider &&
+    item.route === entry.route &&
+    item.recommendedAction === recommendedAction,
+  )
+
+  if (existing) {
+    return knowledgeBase
+      .map(item => item.id === existing.id
+        ? {
+            ...item,
+            seenCount: item.seenCount + 1,
+            successCount: item.successCount + (entry.analysis.autoRepairApplied ? 1 : 0),
+            lastSeenAt: entry.at,
+          }
+        : item)
+      .sort((left, right) => right.lastSeenAt - left.lastSeenAt)
+      .slice(0, MAX_ERROR_CASES)
+  }
+
+  return [
+    {
+      id: createId(),
+      fingerprint,
+      category: entry.analysis.category,
+      provider: entry.provider,
+      route: entry.route,
+      recommendedAction,
+      seenCount: 1,
+      successCount: entry.analysis.autoRepairApplied ? 1 : 0,
+      lastSeenAt: entry.at,
+    },
+    ...knowledgeBase,
+  ].slice(0, MAX_ERROR_CASES)
 }
 
 export function appendErrorLog(settings: Settings, entry: ErrorLogEntry): Pick<Settings, 'errorLogs' | 'lastErrorReport'> {
