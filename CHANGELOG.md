@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.6] - 2026-03-30
+### Added
+- Timeouts robustos para operaciones de chat y streaming en clientes Ollama/OpenAI-compatible/Legacy para evitar esperas indefinidas
+- Timeout de seguridad para busqueda web por IPC, evitando que el chat se bloquee cuando el proveedor web no responde
+- Deteccion de conflictos recientes por runtime local (errores de memoria) y por motor Kawaii (timeouts/fetch fallidos) para ajustar el ruteo Smart
+
+### Changed
+- Smart ahora evita enrutar a local cuando hay fallos recientes de memoria en Ollama y prioriza cloud cuando hay disponibilidad
+- Smart evita seleccionar Kawaii cuando detecta conflictos repetidos recientes, y puede desactivarlo temporalmente para estabilizar el chat
+- El flujo de fallback ahora respeta los motores marcados como inestables y muestra mensaje accionable en lugar de entrar en bucles de reintento
+
+### Fixed
+- Se corrige bloqueo del chat cuando la inicializacion del motor Kawaii falla en ramas de ruteo legacy/smart
+- Se reduce significativamente la incidencia de estados colgados por streams abiertos sin cierre ni error explicito del proveedor
+
 ## [0.4.5] - 2026-03-30
 ### Added
 - Aprendizaje local de casos de error exitosos con huellas, acciones recomendadas y nivel de confianza reutilizable

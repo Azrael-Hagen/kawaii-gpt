@@ -21,6 +21,8 @@ const WEB_HINTS = [
 const CREATIVE_HINTS = ['cuento', 'historia', 'creative', 'poema', 'novela']
 const CODE_HINTS = ['código', 'code', 'bug', 'test', 'typescript', 'python', 'api']
 const CLOUD_RECOVERY_BACKOFF_MS = 90_000
+const LOCAL_AVOIDANCE_WINDOW_MS = 10 * 60_000
+const LEGACY_AVOIDANCE_WINDOW_MS = 10 * 60_000
 
 // ── Image generation detection ────────────────────────────────────────────────
 
@@ -118,6 +120,18 @@ export function selectRoute(settings: Settings, prompt: string): RouteDecision {
     }
   }
 
+  if (shouldAvoidLocalInSmart(settings)) {
+    return {
+      target: 'cloud',
+      reason: 'Smart mode routed to cloud because local runtime is unstable',
+      maxTokens: adaptMaxTokens(settings.cloudMaxTokens, text),
+      temperature: adaptTemperature(settings.temperature, text),
+      useWebSearch: false,
+      generateImage: false,
+      imagePrompt: '',
+    }
+  }
+
   if (shouldBackoffCloud(settings)) {
     return {
       target: 'local',
@@ -130,7 +144,7 @@ export function selectRoute(settings: Settings, prompt: string): RouteDecision {
     }
   }
 
-  const shouldUseLegacy = settings.enableLegacyEngine && (
+  const shouldUseLegacy = settings.enableLegacyEngine && !shouldAvoidLegacyInSmart(settings) && (
     CREATIVE_HINTS.some(h => text.includes(h)) ||
     text.length >= settings.smartLongPromptThreshold * 1.35
   )
@@ -217,6 +231,7 @@ function adaptTemperature(base: number, text: string): number {
 function shouldBackoffCloud(settings: Settings): boolean {
   if (settings.provider !== 'smart') return false
   if (!settings.autoFailover || !settings.localModel) return false
+  if (shouldAvoidLocalInSmart(settings)) return false
 
   const last = settings.cloudDiagnostics
   if (!last?.lastError || !last.lastAt) return false
@@ -230,5 +245,50 @@ function shouldBackoffCloud(settings: Settings): boolean {
     lower.includes('timeout') ||
     lower.includes('econnrefused')
   )
+}
+
+function shouldAvoidLocalInSmart(settings: Settings): boolean {
+  if (settings.provider !== 'smart') return false
+  const logs = settings.errorLogs ?? []
+  if (logs.length === 0) return false
+
+  return logs.some(entry => {
+    if (!entry.at || Date.now() - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) return false
+    const route = (entry.route ?? '').toLowerCase()
+    const message = (entry.message ?? '').toLowerCase()
+
+    const localRoute = route === 'local' || route.includes('->local')
+    if (!localRoute) return false
+
+    return (
+      message.includes('memory layout cannot be allocated') ||
+      message.includes('out of memory') ||
+      message.includes('cannot allocate') ||
+      (message.includes('ollama error (500)') && message.includes('memory'))
+    )
+  })
+}
+
+function shouldAvoidLegacyInSmart(settings: Settings): boolean {
+  if (settings.provider !== 'smart') return false
+  const logs = settings.errorLogs ?? []
+  if (logs.length === 0) return false
+
+  const recentLegacyFailures = logs.filter(entry => {
+    if (!entry.at || Date.now() - entry.at > LEGACY_AVOIDANCE_WINDOW_MS) return false
+    const route = (entry.route ?? '').toLowerCase()
+    const message = (entry.message ?? '').toLowerCase()
+    if (!(route === 'legacy' || route.includes('->legacy'))) return false
+
+    return (
+      message.includes('timeout') ||
+      message.includes('timed out') ||
+      message.includes('failed to fetch') ||
+      message.includes('econnrefused') ||
+      message.includes('no disponible')
+    )
+  })
+
+  return recentLegacyFailures.length >= 2
 }
 

@@ -12,6 +12,8 @@ import type {
 import { buildAttachmentContexts, getImageVisionAttachments } from '@/services/attachments'
 
 const TIMEOUT_MS = 3_000
+const REQUEST_TIMEOUT_MS = 45_000
+const STREAM_TIMEOUT_MS = 120_000
 const MAX_ERROR_SNIPPET = 220
 
 function truncateError(text: string): string {
@@ -32,6 +34,33 @@ function tryReadJsonError(raw: string): string | null {
 
 function normalizeBaseUrl(baseUrl: string): string {
   return baseUrl.replace(/\/+$/, '')
+}
+
+function createTimeoutSignal(signal: AbortSignal | undefined, timeoutMs: number): AbortSignal {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+  if (!signal) return timeoutSignal
+
+  if (typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([signal, timeoutSignal])
+  }
+
+  const controller = new AbortController()
+  const timeoutId = window.setTimeout(() => {
+    controller.abort(new DOMException(`Request timeout after ${timeoutMs}ms`, 'TimeoutError'))
+  }, timeoutMs)
+
+  const onAbort = () => {
+    window.clearTimeout(timeoutId)
+    controller.abort(signal.reason)
+  }
+
+  signal.addEventListener('abort', onAbort, { once: true })
+  controller.signal.addEventListener('abort', () => {
+    window.clearTimeout(timeoutId)
+    signal.removeEventListener('abort', onAbort)
+  }, { once: true })
+
+  return controller.signal
 }
 
 function buildAuthHeaders(apiKey?: string): HeadersInit {
@@ -157,7 +186,9 @@ export class OllamaClient implements ChatClient {
   }
 
   async listModels(): Promise<AIModel[]> {
-    const res = await fetch(`${this.base}/api/tags`)
+    const res = await fetch(`${this.base}/api/tags`, {
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+    })
     if (!res.ok) throw new Error(`Failed to list Ollama models: ${res.statusText}`)
 
     const data = (await res.json()) as {
@@ -194,7 +225,7 @@ export class OllamaClient implements ChatClient {
         stream: true,
         options: { temperature, num_predict: maxTokens },
       }),
-      signal,
+      signal: createTimeoutSignal(signal, STREAM_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -240,6 +271,7 @@ export class OllamaClient implements ChatClient {
         stream: false,
         options: { temperature, num_predict: maxTokens },
       }),
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -281,6 +313,7 @@ export class OpenAICompatibleClient implements ChatClient {
 
     const res = await fetch(`${this.base}/models`, {
       headers: buildAuthHeaders(this.apiKey),
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -319,7 +352,7 @@ export class OpenAICompatibleClient implements ChatClient {
         temperature,
         max_tokens: maxTokens,
       }),
-      signal,
+      signal: createTimeoutSignal(signal, STREAM_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -384,6 +417,7 @@ export class OpenAICompatibleClient implements ChatClient {
         temperature,
         max_tokens: maxTokens,
       }),
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -402,6 +436,7 @@ export class OpenAICompatibleClient implements ChatClient {
       method: 'POST',
       headers: buildAuthHeaders(this.apiKey),
       body: JSON.stringify({ model, prompt, n: 1, size: '1024x1024' }),
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -455,6 +490,7 @@ export class LegacyEngineClient implements ChatClient {
   async listModels(): Promise<AIModel[]> {
     const res = await fetch(`${this.base}/models`, {
       headers: buildAuthHeaders(this.apiKey),
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -497,7 +533,7 @@ export class LegacyEngineClient implements ChatClient {
         temperature,
         max_tokens: maxTokens,
       }),
-      signal,
+      signal: createTimeoutSignal(signal, STREAM_TIMEOUT_MS),
     })
 
     if (!res.ok) {
@@ -557,6 +593,7 @@ export class LegacyEngineClient implements ChatClient {
         temperature,
         max_tokens: maxTokens,
       }),
+      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {

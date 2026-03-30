@@ -30,6 +30,8 @@ interface CloudCfg {
 
 const SOFT_REFUSAL_ERR = 'SOFT_REFUSAL'
 const STREAM_PARTIAL_UPDATE_MS = 48
+const LOCAL_CONFLICT_WINDOW_MS = 10 * 60_000
+const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
@@ -98,6 +100,46 @@ function toFriendlyImageError(err: unknown): string {
     return 'API key inválida para el proveedor de imagen seleccionado.'
   }
   return raw
+}
+
+function hasRecentLocalRuntimeConflict(settings: Settings): boolean {
+  const logs = settings.errorLogs ?? []
+  if (logs.length === 0) return false
+
+  return logs.some(entry => {
+    if (!entry.at || Date.now() - entry.at > LOCAL_CONFLICT_WINDOW_MS) return false
+    const route = (entry.route ?? '').toLowerCase()
+    if (!(route === 'local' || route.includes('->local'))) return false
+
+    const msg = (entry.message ?? '').toLowerCase()
+    return (
+      msg.includes('memory layout cannot be allocated') ||
+      msg.includes('out of memory') ||
+      msg.includes('cannot allocate')
+    )
+  })
+}
+
+function hasRecentLegacyConflict(settings: Settings): boolean {
+  const logs = settings.errorLogs ?? []
+  if (logs.length === 0) return false
+
+  const recentLegacyFailures = logs.filter(entry => {
+    if (!entry.at || Date.now() - entry.at > LEGACY_CONFLICT_WINDOW_MS) return false
+    const route = (entry.route ?? '').toLowerCase()
+    if (!(route === 'legacy' || route.includes('->legacy'))) return false
+
+    const msg = (entry.message ?? '').toLowerCase()
+    return (
+      msg.includes('timeout') ||
+      msg.includes('timed out') ||
+      msg.includes('failed to fetch') ||
+      msg.includes('econnrefused') ||
+      msg.includes('no disponible')
+    )
+  })
+
+  return recentLegacyFailures.length >= 2
 }
 
 function shouldFlushStreamUpdate(chunk: string, lastUpdateAt: number): boolean {
@@ -420,10 +462,25 @@ export function useChat(models: AIModel[] = []) {
     let decision: ReturnType<typeof selectRoute>
     let sysPrompt = ''
     let cloudQueue: CloudCfg[] = []
+    let avoidLocalFallback = false
+    let avoidLegacyFallback = false
 
     try {
       apiKey = await getProviderApiKey()
-      decision = selectRoute(settings, routePrompt)
+      const currentSettings = useSettingsStore.getState().settings
+      avoidLocalFallback = hasRecentLocalRuntimeConflict(currentSettings)
+      avoidLegacyFallback = hasRecentLegacyConflict(currentSettings)
+
+      if (avoidLegacyFallback && currentSettings.enableLegacyEngine) {
+        updateSettings({ enableLegacyEngine: false })
+      }
+
+      const routingSettings: Settings = {
+        ...currentSettings,
+        enableLegacyEngine: currentSettings.enableLegacyEngine && !avoidLegacyFallback,
+      }
+
+      decision = selectRoute(routingSettings, routePrompt)
       sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
       const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
       cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
@@ -600,8 +657,8 @@ export function useChat(models: AIModel[] = []) {
     // ── Legacy engine mode ────────────────────────────────────────────────────
     if (settings.provider === 'legacy-engine' || target === 'legacy') {
       const legacyModel = stripPrefix(settings.legacyModel || model || 'legacy-default')
-      const legacyClient = await ensureLegacyClient(settings, apiKey)
       try {
+        const legacyClient = await ensureLegacyClient(settings, apiKey)
         if (settings.streamResponses) {
           let acc = ''
           const streamUi = createStreamUpdateController((partial) => {
@@ -635,7 +692,7 @@ export function useChat(models: AIModel[] = []) {
         const msg = err instanceof Error ? err.message : String(err)
         logError(msg, { provider: settings.legacyEngineBaseUrl, route: 'legacy' })
 
-        if (settings.provider === 'smart' && settings.autoFailover && settings.localModel) {
+        if (settings.provider === 'smart' && settings.autoFailover && settings.localModel && !avoidLocalFallback) {
           const localModel = stripPrefix(settings.localModel)
           const localClient = new OllamaClient(settings.localBaseUrl)
           updateMessage(convId!, assistantId, `⚠️ Kawaii no disponible (${msg}) → usando modelo local...`, true)
@@ -674,7 +731,7 @@ export function useChat(models: AIModel[] = []) {
         }
 
         setError(msg)
-  logError(msg, { provider: settings.localBaseUrl, route: 'local' })
+        logError(msg, { provider: settings.legacyEngineBaseUrl, route: 'legacy' })
         updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
       } finally {
         setIsLoading(false)
@@ -822,7 +879,7 @@ export function useChat(models: AIModel[] = []) {
         const shouldPreferLegacy = learnedRepair.suggestion === 'switch_to_legacy' && (learnedRepair.confidence ?? 0) >= 0.6
         const shouldPreferLocal = learnedRepair.suggestion === 'switch_to_local' && (learnedRepair.confidence ?? 0) >= 0.6
 
-        if (shouldPreferLocal && settings.autoFailover && settings.localModel) {
+        if (shouldPreferLocal && settings.autoFailover && settings.localModel && !avoidLocalFallback) {
           const localModel = stripPrefix(settings.localModel)
           const localClient = new OllamaClient(settings.localBaseUrl)
           updateMessage(convId!, assistantId, `⚡ Aprendizaje local sugiere fallback directo a modelo local (${Math.round((learnedRepair.confidence ?? 0) * 100)}%)...`, true)
@@ -856,7 +913,7 @@ export function useChat(models: AIModel[] = []) {
           }
         }
 
-        if ((shouldPreferLegacy || (!shouldPreferLocal && settings.enableLegacyEngine && settings.legacyModel)) && settings.enableLegacyEngine && settings.legacyModel) {
+        if ((shouldPreferLegacy || (!shouldPreferLocal && settings.enableLegacyEngine && settings.legacyModel)) && settings.enableLegacyEngine && settings.legacyModel && !avoidLegacyFallback) {
           const legacyModel = stripPrefix(settings.legacyModel)
           updateMessage(convId!, assistantId, `⚠️ Nube sin disponibilidad (${errMsg}) → probando motor Kawaii...`, true)
           try {
@@ -900,7 +957,7 @@ export function useChat(models: AIModel[] = []) {
           }
         }
 
-        if (settings.autoFailover && settings.localModel) {
+        if (settings.autoFailover && settings.localModel && !avoidLocalFallback) {
           const localModel = stripPrefix(settings.localModel)
           const localClient = new OllamaClient(settings.localBaseUrl)
           updateMessage(convId!, assistantId, `⚠️ Nube sin disponibilidad (${errMsg}) → usando modelo local...`, true)
@@ -938,6 +995,18 @@ export function useChat(models: AIModel[] = []) {
         }
 
         const msg = summarizeProviderError(err)
+        if (avoidLocalFallback || avoidLegacyFallback) {
+          const details = [
+            avoidLegacyFallback ? 'motor Kawaii desactivado temporalmente por conflictos recientes' : '',
+            avoidLocalFallback ? 'runtime local con errores de memoria recientes' : '',
+          ].filter(Boolean).join(' · ')
+          const finalMessage = details ? `${msg}. ${details}` : msg
+          logError(finalMessage, { provider: cfg.label, route: 'cloud' })
+          setError(finalMessage)
+          updateMessage(convId, assistantId, `⚠️ ${finalMessage}`, false)
+          setIsLoading(false)
+          return
+        }
         logError(msg, { provider: cfg.label, route: 'cloud' })
         setError(msg)
         updateMessage(convId, assistantId, `⚠️ ${msg}`, false)

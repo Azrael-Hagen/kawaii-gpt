@@ -71,6 +71,87 @@ describe('smartRouting', () => {
     expect(decision.target).toBe('cloud')
   })
 
+  it('routes smart mode to cloud when recent local memory failures are detected', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'smart' as const,
+      localModel: 'qwen2.5:0.5b',
+      errorLogs: [
+        {
+          id: 'e1',
+          source: 'chat' as const,
+          severity: 'error' as const,
+          message: 'Ollama error (500): {"error":"memory layout cannot be allocated"}',
+          route: 'local',
+          status: 'report-ready' as const,
+          at: Date.now(),
+          analysis: {
+            category: 'runtime' as const,
+            probableCause: 'Local runtime failure',
+            suggestedFix: 'Use cloud temporarily',
+            recognitionNotes: ['category:runtime'],
+            autoRepairTried: true,
+            autoRepairApplied: false,
+            reportMarkdown: 'x',
+          },
+        },
+      ],
+    }
+
+    const decision = selectRoute(settings, 'Dime un chiste corto')
+    expect(decision.target).toBe('cloud')
+  })
+
+  it('avoids legacy route when repeated recent legacy failures exist', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'smart' as const,
+      enableLegacyEngine: true,
+      smartLongPromptThreshold: 500,
+      errorLogs: [
+        {
+          id: 'l1',
+          source: 'chat' as const,
+          severity: 'error' as const,
+          message: 'signal timed out',
+          route: 'legacy',
+          status: 'report-ready' as const,
+          at: Date.now(),
+          analysis: {
+            category: 'timeout' as const,
+            probableCause: 'Legacy timeout',
+            suggestedFix: 'Skip legacy',
+            recognitionNotes: ['category:timeout'],
+            autoRepairTried: true,
+            autoRepairApplied: false,
+            reportMarkdown: 'x',
+          },
+        },
+        {
+          id: 'l2',
+          source: 'chat' as const,
+          severity: 'error' as const,
+          message: 'Failed to fetch legacy runtime',
+          route: 'cloud->legacy',
+          status: 'report-ready' as const,
+          at: Date.now(),
+          analysis: {
+            category: 'network' as const,
+            probableCause: 'Legacy unavailable',
+            suggestedFix: 'Skip legacy',
+            recognitionNotes: ['category:network'],
+            autoRepairTried: true,
+            autoRepairApplied: false,
+            reportMarkdown: 'x',
+          },
+        },
+      ],
+    }
+
+    const decision = selectRoute(settings, 'Escribe una historia creative muy larga con varios giros narrativos y desarrollo emocional profundo para los personajes principales.')
+    expect(decision.target).not.toBe('legacy')
+  })
+
   it('resolves model by route', () => {
     const settings = {
       ...DEFAULT_SETTINGS,
