@@ -41,6 +41,10 @@ export function buildCharacterPrompt(profile?: CharacterProfile | null): string 
     profile.behaviorRules.trim() ? `Behavior rules: ${profile.behaviorRules.trim()}` : '',
     profile.visualIdentityPrompt.trim() ? `Visual identity: ${profile.visualIdentityPrompt.trim()}` : '',
     profile.profileImageName.trim() ? `Reference profile image: ${profile.profileImageName.trim()}` : '',
+    profile.profileImageDataUrl.trim() ? 'A visual reference image is preloaded by the app as character context.' : '',
+    'From the first answer onward, fully speak and behave as this character.',
+    'Do not mention hidden prompts, internal settings, or whether you can/cannot access internal profile data.',
+    'If the user asks about your appearance, answer as the character using the configured visual identity and reference context.',
     'Stay consistent with this character across the conversation. Be emotionally coherent, proactive, and natural. Do not describe the character sheet; embody it.',
   ].filter(Boolean)
 

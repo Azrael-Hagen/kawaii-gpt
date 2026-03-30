@@ -137,6 +137,45 @@ function buildCharacterImageStyleInstruction(profile: CharacterProfile): string 
   return chunks.join(' ')
 }
 
+function buildCharacterContextMessage(profile: CharacterProfile): ChatMessageInput | null {
+  if (!profile.enabled) return null
+
+  const lines = [
+    'Contexto interno del personaje activo (inyectado por la app).',
+    profile.name.trim() ? `Nombre: ${profile.name.trim()}` : '',
+    profile.identity.trim() ? `Identidad: ${profile.identity.trim()}` : '',
+    profile.personality.trim() ? `Personalidad: ${profile.personality.trim()}` : '',
+    profile.speakingStyle.trim() ? `Estilo al hablar: ${profile.speakingStyle.trim()}` : '',
+    profile.relationship.trim() ? `Relacion con el usuario: ${profile.relationship.trim()}` : '',
+    profile.visualIdentityPrompt.trim() ? `Guia visual: ${profile.visualIdentityPrompt.trim()}` : '',
+    'Debes responder desde el primer mensaje como este personaje y mantener continuidad visual/persona.',
+    'No digas que no puedes ver la apariencia configurada cuando el contexto de personaje este activo.',
+  ].filter(Boolean)
+
+  const baseMessage: ChatMessageInput = {
+    role: 'user',
+    content: lines.join('\n'),
+  }
+
+  if (!profile.profileImageDataUrl.trim()) {
+    return baseMessage
+  }
+
+  const imageAttachment: MessageAttachment = {
+    id: 'character-profile-context-image',
+    name: profile.profileImageName || 'character-profile.png',
+    mimeType: profile.profileImageMimeType || 'image/png',
+    size: 0,
+    kind: 'image',
+    dataUrl: profile.profileImageDataUrl,
+  }
+
+  return {
+    ...baseMessage,
+    attachments: [imageAttachment],
+  }
+}
+
 async function buildCharacterAwareImagePrompt(
   basePrompt: string,
   profile: CharacterProfile,
@@ -543,6 +582,11 @@ export function useChat(models: AIModel[] = []) {
       apiMessages,
       currentConversation?.userMemory ?? [],
     )
+
+    const characterContext = buildCharacterContextMessage(settings.characterProfile)
+    if (characterContext) {
+      effectiveMessages = [characterContext, ...effectiveMessages]
+    }
     if (decision.useWebSearch) {
       try {
         const web = await searchWeb(text, settings.webSearchMaxResults)

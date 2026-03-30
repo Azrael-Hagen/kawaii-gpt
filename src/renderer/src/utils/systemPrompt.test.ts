@@ -21,6 +21,7 @@ describe('systemPrompt', () => {
     expect(out).toContain('Aleia')
     expect(out).toContain('compañera virtual romántica')
     expect(out).toContain('aleia.png')
+    expect(out).toContain('From the first answer onward')
     expect(out).toContain('Responde con detalle.')
   })
 
