@@ -320,3 +320,22 @@
 **Next steps**:
 - Expose advanced toggle for cloud precheck policy (off/ttl/on-demand) in Settings
 - Add performance diagnostics panel with p50/p95 response startup metrics by route
+
+## [CP-16.1] 2026-03-30
+**Status**: Passed
+**Decisions made**:
+- Added a local automatic error logger backed by persisted settings so diagnostics survive app restarts without needing external infrastructure
+- Implemented a lightweight heuristic "mini AI" for error analysis instead of invoking another model during failure conditions
+- Expanded user memory extraction to include secondary preference/personality signals that are useful for personalization without leaving the current conversation scope
+
+**Trade-offs**:
+- Heuristic error analysis is less expressive than a full LLM debugger, but it is deterministic, fast, and still works when the network/provider is failing
+- Persisting logs in settings is simple and local-first, but it is not a full observability pipeline with aggregation or remote telemetry
+
+**Debt deferred**:
+- Add export-to-file for error logs and one-click GitHub issue template generation
+- Add TTL/retention controls for low-priority memory facts and diagnostic logs
+
+**Next steps**:
+- Add selective redaction before copying reports if future logs include richer request metadata
+- Add per-provider counters and mini dashboard for recurring failure patterns

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Sidebar from '@/components/sidebar/Sidebar'
 import ChatWindow from '@/components/chat/ChatWindow'
 import ChatInput from '@/components/chat/ChatInput'
@@ -9,6 +9,7 @@ import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChat } from '@/hooks/useChat'
 import { useModels } from '@/hooks/useModels'
+import { appendErrorLog, createErrorLogEntry } from '@/services/errorDiagnostics'
 
 export default function App() {
   const [showSettings, setShowSettings] = useState(false)
@@ -25,6 +26,35 @@ export default function App() {
 
   const { models, status, refetch } = useModels()
   const { sendMessage, stopStreaming, isLoading, error, clearError } = useChat(models)
+
+  useEffect(() => {
+    if (!settings.autoErrorAssistEnabled) return undefined
+
+    const onError = (event: ErrorEvent) => {
+      const entry = createErrorLogEntry({
+        source: 'global',
+        message: event.message || 'Unknown renderer error',
+      })
+      update(appendErrorLog(useSettingsStore.getState().settings, entry))
+    }
+
+    const onUnhandled = (event: PromiseRejectionEvent) => {
+      const reason = event.reason instanceof Error ? event.reason.message : String(event.reason)
+      const entry = createErrorLogEntry({
+        source: 'global',
+        message: reason || 'Unhandled promise rejection',
+      })
+      update(appendErrorLog(useSettingsStore.getState().settings, entry))
+    }
+
+    window.addEventListener('error', onError)
+    window.addEventListener('unhandledrejection', onUnhandled)
+
+    return () => {
+      window.removeEventListener('error', onError)
+      window.removeEventListener('unhandledrejection', onUnhandled)
+    }
+  }, [settings.autoErrorAssistEnabled, update])
 
   return (
     <div className="h-full flex flex-col bg-kawaii-bg">

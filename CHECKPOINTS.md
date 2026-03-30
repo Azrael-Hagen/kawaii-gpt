@@ -231,3 +231,16 @@
 - [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
 **Status**: `[x]`
 **Notes**: Se priorizo tiempo a primer token y estabilidad percibida, manteniendo fallback por rotacion de proveedor ante errores reales de ejecucion.
+
+---
+
+## CP-16: Local Error Intelligence & Secondary Memory
+**Milestone**: Registrar errores automaticamente, generar reportes locales y recordar gustos/rasgos secundarios del usuario
+**Acceptance Criteria**:
+- [x] La app captura errores relevantes de chat y renderer en un logger local persistente
+- [x] Un asistente heuristico clasifica el error, marca si hubo auto-reparacion y genera reporte cuando no puede resolverlo
+- [x] Opciones muestra logs recientes y el ultimo reporte automatico
+- [x] La memoria local del usuario amplifica gustos, hobbies, rasgos de personalidad y estilo de comunicacion
+- [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
+**Status**: `[x]`
+**Notes**: Se eligio un analizador heuristico local para no depender de otra llamada de IA cuando la propia app esta en estado de error.

@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.4] - 2026-03-30
+### Added
+- Logger automatico local de errores con captura global de renderer y fallos de chat
+- Asistente de errores heuristico que clasifica causas, detecta reparacion automatica y genera reporte listo para copiar cuando no puede resolver
+- Seccion de diagnosticos en Opciones para ver logs recientes, activar/desactivar asistencia y consultar el ultimo reporte automatico
+- Memoria secundaria del usuario ampliada con gustos, hobbies, rasgos de personalidad y estilo de comunicacion
+
+### Changed
+- Los errores de chat ahora se registran localmente junto con proveedor, ruta y estado de auto-reparacion
+- Los fallbacks exitosos a legacy o local quedan marcados como auto-reparados en el diagnostico
+
+### Fixed
+- Mejora la trazabilidad de errores intermitentes como `Failed to fetch` sin depender solo del banner temporal del chat
+- Se reduce la perdida de contexto sobre preferencias secundarias del usuario dentro de una conversacion
+
 ## [0.4.3] - 2026-03-29
 ### Changed
 - El envio de chat en cloud deja de hacer pre-chequeos de conectividad por proveedor en cada mensaje y prioriza envio inmediato con rotacion por error real

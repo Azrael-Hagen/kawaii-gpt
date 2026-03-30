@@ -17,7 +17,7 @@ export const useSettingsStore = create<SettingsState>()(
     }),
     {
       name: 'kawaii-gpt-settings',
-      version: 13,
+      version: 14,
       // Merge any persisted state on top of DEFAULT_SETTINGS so new fields
       // always receive their default values when upgrading.
       migrate: (persisted: unknown) => {
@@ -38,6 +38,15 @@ export const useSettingsStore = create<SettingsState>()(
         }
         if (!Array.isArray(merged.cloudConnectivity)) {
           merged.cloudConnectivity = DEFAULT_SETTINGS.cloudConnectivity
+        }
+        if (typeof merged.autoErrorAssistEnabled !== 'boolean') {
+          merged.autoErrorAssistEnabled = DEFAULT_SETTINGS.autoErrorAssistEnabled
+        }
+        if (!Array.isArray(merged.errorLogs)) {
+          merged.errorLogs = DEFAULT_SETTINGS.errorLogs
+        }
+        if (typeof merged.lastErrorReport === 'undefined') {
+          merged.lastErrorReport = DEFAULT_SETTINGS.lastErrorReport
         }
         if (typeof merged.enableLegacyEngine !== 'boolean') {
           merged.enableLegacyEngine = DEFAULT_SETTINGS.enableLegacyEngine

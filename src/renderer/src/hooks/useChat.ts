@@ -9,6 +9,7 @@ import {
   providerSupportsImageGeneration,
 } from '@/services/cloudCatalog'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
+import { appendErrorLog, createErrorLogEntry } from '@/services/errorDiagnostics'
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
@@ -356,6 +357,18 @@ export function useChat(models: AIModel[] = []) {
   const { activeId, addMessage, updateMessage, create, rename, upsertUserMemory } = useChatStore()
   const { settings, update: updateSettings } = useSettingsStore()
 
+  const logError = useCallback((message: string, options?: { provider?: string; route?: string; autoRepairApplied?: boolean }) => {
+    if (!useSettingsStore.getState().settings.autoErrorAssistEnabled) return
+    const entry = createErrorLogEntry({
+      source: 'chat',
+      message,
+      provider: options?.provider,
+      route: options?.route,
+      autoRepairApplied: options?.autoRepairApplied,
+    })
+    updateSettings(appendErrorLog(useSettingsStore.getState().settings, entry))
+  }, [updateSettings])
+
   const sendMessage = useCallback(async (content: string, attachments: MessageAttachment[] = []): Promise<void> => {
     const text = content.trim()
     if ((!text && attachments.length === 0) || isLoading) return
@@ -411,6 +424,7 @@ export function useChat(models: AIModel[] = []) {
       cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
     } catch (err) {
       const msg = summarizeProviderError(err)
+      logError(msg, { route: settings.provider })
       setError(msg)
       updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
       setIsLoading(false)
@@ -547,6 +561,7 @@ export function useChat(models: AIModel[] = []) {
         throw new Error(lastError ?? 'No se pudo generar la imagen con los proveedores cloud disponibles.')
       } catch (err) {
         const msg = toFriendlyImageError(err)
+        logError(msg, { provider: settings.cloudBaseUrl, route: 'image' })
         updateSettings({
           cloudDiagnostics: {
             lastProvider: `imagen • ${settings.imageGenModel}`,
@@ -620,6 +635,7 @@ export function useChat(models: AIModel[] = []) {
         }
 
         const msg = err instanceof Error ? err.message : String(err)
+        logError(msg, { provider: settings.legacyEngineBaseUrl, route: 'legacy' })
 
         if (settings.provider === 'smart' && settings.autoFailover && settings.localModel) {
           const localModel = stripPrefix(settings.localModel)
@@ -640,14 +656,17 @@ export function useChat(models: AIModel[] = []) {
               }
               streamUi.flush(acc)
               updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback) • ${localModel}`)
+              logError(msg, { provider: settings.localBaseUrl, route: 'legacy->local', autoRepairApplied: true })
             } else {
               const r = await localClient.chat(
                 localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
               )
               updateMessage(convId!, assistantId, r, false, undefined, `local (fallback) • ${localModel}`)
+              logError(msg, { provider: settings.localBaseUrl, route: 'legacy->local', autoRepairApplied: true })
             }
           } catch (fbErr) {
             const fbMsg = summarizeProviderError(fbErr)
+            logError(fbMsg, { provider: settings.localBaseUrl, route: 'legacy->local' })
             setError(fbMsg)
             updateMessage(convId!, assistantId, `⚠️ ${fbMsg}`, false)
           } finally {
@@ -657,6 +676,7 @@ export function useChat(models: AIModel[] = []) {
         }
 
         setError(msg)
+  logError(msg, { provider: settings.localBaseUrl, route: 'local' })
         updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
       } finally {
         setIsLoading(false)
@@ -710,6 +730,7 @@ export function useChat(models: AIModel[] = []) {
     // ── Cloud mode with automatic provider rotation ───────────────────────────
     if (cloudQueue.length === 0) {
       const notice = '⚠️ Sin proveedor cloud disponible. Revisa API keys, endpoint y modelo en Ajustes ⚙️.'
+      logError(notice, { route: 'cloud-queue' })
       updateSettings({
         cloudDiagnostics: {
           lastProvider: 'cloud-queue',
@@ -772,6 +793,7 @@ export function useChat(models: AIModel[] = []) {
         }
 
         const errMsg = summarizeProviderError(err)
+        logError(errMsg, { provider: cfg.label, route: 'cloud' })
         updateSettings({
           cloudDiagnostics: {
             lastProvider: cfg.label,
@@ -814,16 +836,19 @@ export function useChat(models: AIModel[] = []) {
               }
               streamUi.flush(acc)
               updateMessage(convId!, assistantId, acc, false, undefined, `kawaii (fallback) • ${legacyModel}`)
+              logError(errMsg, { provider: `kawaii • ${legacyModel}`, route: 'cloud->legacy', autoRepairApplied: true })
             } else {
               const r = await legacyClient.chat(
                 legacyModel, effectiveMessages, sysPrompt, decision.temperature, settings.cloudMaxTokens,
               )
               updateMessage(convId!, assistantId, r, false, undefined, `kawaii (fallback) • ${legacyModel}`)
+              logError(errMsg, { provider: `kawaii • ${legacyModel}`, route: 'cloud->legacy', autoRepairApplied: true })
             }
             setIsLoading(false)
             return
           } catch (legacyErr) {
             const legacyMsg = summarizeProviderError(legacyErr)
+            logError(legacyMsg, { provider: `kawaii • ${legacyModel}`, route: 'cloud->legacy' })
             updateSettings({
               cloudDiagnostics: {
                 lastProvider: `kawaii • ${legacyModel}`,
@@ -855,14 +880,17 @@ export function useChat(models: AIModel[] = []) {
               }
               streamUi.flush(acc)
               updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback) • ${localModel}`)
+              logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
             } else {
               const r = await localClient.chat(
                 localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
               )
               updateMessage(convId!, assistantId, r, false, undefined, `local (fallback) • ${localModel}`)
+              logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
             }
           } catch (fbErr) {
             const fbMsg = summarizeProviderError(fbErr)
+            logError(fbMsg, { provider: settings.localBaseUrl, route: 'cloud->local' })
             setError(fbMsg)
             updateMessage(convId!, assistantId, `⚠️ ${fbMsg}`, false)
           }
@@ -871,6 +899,7 @@ export function useChat(models: AIModel[] = []) {
         }
 
         const msg = summarizeProviderError(err)
+        logError(msg, { provider: cfg.label, route: 'cloud' })
         setError(msg)
         updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
         setIsLoading(false)
@@ -879,7 +908,7 @@ export function useChat(models: AIModel[] = []) {
     }
 
     setIsLoading(false)
-  }, [isLoading, activeId, settings, models, addMessage, updateMessage, create, rename, upsertUserMemory, updateSettings])
+  }, [isLoading, activeId, settings, models, addMessage, updateMessage, create, rename, upsertUserMemory, updateSettings, logError])
 
   const stopStreaming = useCallback((): void => {
     abortRef.current?.abort()

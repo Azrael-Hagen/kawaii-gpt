@@ -197,6 +197,27 @@ export interface CloudConnectivityStatus {
   checkedAt: number
 }
 
+export interface ErrorAnalysis {
+  category: 'network' | 'auth' | 'model' | 'runtime' | 'timeout' | 'policy' | 'unknown'
+  probableCause: string
+  suggestedFix: string
+  autoRepairTried: boolean
+  autoRepairApplied: boolean
+  reportMarkdown: string
+}
+
+export interface ErrorLogEntry {
+  id: string
+  source: 'chat' | 'runtime' | 'global'
+  severity: 'warning' | 'error'
+  message: string
+  provider?: string
+  route?: string
+  status: 'captured' | 'auto-repaired' | 'report-ready'
+  at: number
+  analysis: ErrorAnalysis
+}
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface Settings extends ProviderSettings, SmartRoutingSettings {
@@ -228,6 +249,9 @@ export interface Settings extends ProviderSettings, SmartRoutingSettings {
   preferFreeTier: boolean
   cloudDiagnostics: CloudDiagnostics | null
   cloudConnectivity: CloudConnectivityStatus[]
+  autoErrorAssistEnabled: boolean
+  errorLogs: ErrorLogEntry[]
+  lastErrorReport: string | null
   // Multi-provider
   additionalProviders: AdditionalProvider[]
   autoFailover: boolean
@@ -291,6 +315,9 @@ export const DEFAULT_SETTINGS: Settings = {
   preferFreeTier: true,
   cloudDiagnostics: null,
   cloudConnectivity: [],
+  autoErrorAssistEnabled: true,
+  errorLogs: [],
+  lastErrorReport: null,
   additionalProviders: [
     { id: 'ap1', name: '', baseUrl: '', enabled: false },
     { id: 'ap2', name: '', baseUrl: '', enabled: false },

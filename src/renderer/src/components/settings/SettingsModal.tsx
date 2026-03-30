@@ -635,6 +635,77 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                   </div>
                 </div>
               )}
+
+              <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-kawaii-text">Logger automatico y asistente de errores</span>
+                  <label className="flex items-center gap-2 text-kawaii-dim">
+                    <input
+                      type="checkbox"
+                      checked={settings.autoErrorAssistEnabled}
+                      onChange={(e) => update({ autoErrorAssistEnabled: e.target.checked })}
+                      className="accent-kawaii-pink"
+                    />
+                    Activo
+                  </label>
+                </div>
+
+                {settings.errorLogs.length === 0 ? (
+                  <p className="text-kawaii-dim">Sin errores registrados localmente.</p>
+                ) : (
+                  <div className="space-y-2">
+                    <div className="max-h-40 overflow-auto space-y-1">
+                      {settings.errorLogs.slice(0, 6).map(entry => (
+                        <div key={entry.id} className="rounded-md border border-kawaii-surface-3 px-2 py-1.5 text-kawaii-dim">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-semibold text-kawaii-text">{entry.analysis.category} · {entry.status}</span>
+                            <span>{formatTime(entry.at)}</span>
+                          </div>
+                          <div>{entry.message}</div>
+                          <div className="text-[11px]">{entry.analysis.probableCause}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => update({ errorLogs: [], lastErrorReport: null })}
+                        className="rounded-lg border border-kawaii-surface-3 px-2 py-1 text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                      >
+                        Limpiar logs
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {settings.lastErrorReport && (
+                  <div className="space-y-1">
+                    <div className="font-semibold text-kawaii-text">Reporte automatico listo</div>
+                    <textarea
+                      readOnly
+                      value={settings.lastErrorReport}
+                      rows={7}
+                      className="w-full bg-kawaii-surface border border-kawaii-surface-3 rounded-lg px-2 py-2 text-[11px] text-kawaii-dim"
+                    />
+                    <div className="flex justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(settings.lastErrorReport || '')}
+                        className="rounded-lg border border-kawaii-surface-3 px-2 py-1 text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                      >
+                        Copiar reporte
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => update({ lastErrorReport: null })}
+                        className="rounded-lg border border-kawaii-surface-3 px-2 py-1 text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                      >
+                        Ocultar
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </section>
           )}
 

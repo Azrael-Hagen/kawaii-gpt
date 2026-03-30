@@ -4,11 +4,12 @@ import type { ChatMessageInput, UserMemoryFact } from '@/types'
 
 describe('userMemory', () => {
   it('extracts important user facts from natural language', () => {
-    const facts = extractImportantUserFacts('Hola, me llamo Lucia y vivo en Sevilla. Mi color favorito es verde.')
+    const facts = extractImportantUserFacts('Hola, me llamo Lucia y vivo en Sevilla. Mi color favorito es verde. Me gusta la tecnologia y soy curiosa.')
 
     expect(facts.some(f => f.key === 'name' && f.value.toLowerCase().includes('lucia'))).toBe(true)
     expect(facts.some(f => f.key === 'location' && f.value.toLowerCase().includes('sevilla'))).toBe(true)
     expect(facts.some(f => f.key === 'favorite_color' && f.value.toLowerCase().includes('verde'))).toBe(true)
+    expect(facts.some(f => f.key === 'likes' && f.value.toLowerCase().includes('tecnologia'))).toBe(true)
   })
 
   it('prepends memory context message when memory exists', () => {
