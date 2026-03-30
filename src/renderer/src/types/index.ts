@@ -201,6 +201,7 @@ export interface ErrorAnalysis {
   category: 'network' | 'auth' | 'model' | 'runtime' | 'timeout' | 'policy' | 'unknown'
   probableCause: string
   suggestedFix: string
+  recognitionNotes: string[]
   autoRepairTried: boolean
   autoRepairApplied: boolean
   learnedSuggestion?: string
@@ -215,6 +216,8 @@ export interface ErrorKnowledgeCase {
   provider?: string
   route?: string
   recommendedAction: string
+  recognitionNotes?: string[]
+  sampleMessages?: string[]
   seenCount: number
   successCount: number
   lastSeenAt: number

@@ -2,6 +2,8 @@ import type { ErrorAnalysis, ErrorKnowledgeCase, ErrorLogEntry, Settings } from 
 
 const MAX_ERROR_LOGS = 30
 const MAX_ERROR_CASES = 60
+const MAX_RECOGNITION_NOTES = 14
+const MAX_SAMPLE_MESSAGES = 3
 
 function createId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -36,12 +38,65 @@ function inferRepairAction(category: ErrorAnalysis['category'], route?: string, 
   return 'generate_report'
 }
 
-function scoreCase(candidate: ErrorKnowledgeCase, fingerprint: string, category: ErrorAnalysis['category'], provider?: string, route?: string): number {
+function limitUnique(values: string[], max: number): string[] {
+  const normalized = values
+    .map(item => compact(item))
+    .filter(Boolean)
+  return [...new Set(normalized)].slice(0, max)
+}
+
+function extractRecognitionNotes(
+  message: string,
+  category: ErrorAnalysis['category'],
+  context?: { provider?: string; route?: string; autoRepairApplied?: boolean; learnedSuggestion?: string },
+): string[] {
+  const lower = compact(message).toLowerCase()
+  const notes: string[] = []
+
+  notes.push(`category:${category}`)
+  if (context?.provider) notes.push(`provider:${context.provider}`)
+  if (context?.route) notes.push(`route:${context.route}`)
+  if (context?.autoRepairApplied) notes.push('status:auto-repaired')
+  if (context?.learnedSuggestion) notes.push(`learned:${context.learnedSuggestion}`)
+
+  const statusCode = lower.match(/\b(4\d\d|5\d\d)\b/)?.[1]
+  if (statusCode) notes.push(`http:${statusCode}`)
+
+  if (lower.includes('failed to fetch')) notes.push('signal:failed-fetch')
+  if (lower.includes('timeout') || lower.includes('timed out')) notes.push('signal:timeout')
+  if (lower.includes('econnrefused')) notes.push('signal:econnrefused')
+  if (lower.includes('cors')) notes.push('signal:cors')
+  if (lower.includes('invalid api key') || lower.includes('unauthorized')) notes.push('signal:auth-key')
+  if (lower.includes('model') && lower.includes('not found')) notes.push('signal:model-not-found')
+  if (lower.includes('resource not found')) notes.push('signal:resource-not-found')
+  if (lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('429')) notes.push('signal:rate-limit')
+  if (lower.includes('openrouter')) notes.push('provider-hint:openrouter')
+  if (lower.includes('ollama')) notes.push('provider-hint:ollama')
+  if (lower.includes('legacy') || lower.includes('kawaii')) notes.push('provider-hint:legacy')
+
+  return limitUnique(notes, MAX_RECOGNITION_NOTES)
+}
+
+function countNoteOverlap(left: string[], right: string[]): number {
+  if (left.length === 0 || right.length === 0) return 0
+  const rightSet = new Set(right)
+  return left.filter(item => rightSet.has(item)).length
+}
+
+function scoreCase(
+  candidate: ErrorKnowledgeCase,
+  fingerprint: string,
+  category: ErrorAnalysis['category'],
+  provider?: string,
+  route?: string,
+  recognitionNotes: string[] = [],
+): number {
   let score = 0
   if (candidate.fingerprint === fingerprint) score += 6
   if (candidate.category === category) score += 3
   if (candidate.provider && provider && candidate.provider === provider) score += 2
   if (candidate.route && route && candidate.route === route) score += 2
+  score += Math.min(3, countNoteOverlap(candidate.recognitionNotes ?? [], recognitionNotes))
   score += Math.min(candidate.successCount, 4)
   return score
 }
@@ -52,11 +107,12 @@ function predictRepairFromKnowledgeBase(
   category: ErrorAnalysis['category'],
   provider?: string,
   route?: string,
+  recognitionNotes: string[] = [],
 ): { suggestion?: string; confidence?: number } {
   if (knowledgeBase.length === 0) return {}
 
   const ranked = [...knowledgeBase]
-    .map(item => ({ item, score: scoreCase(item, fingerprint, category, provider, route) }))
+    .map(item => ({ item, score: scoreCase(item, fingerprint, category, provider, route, recognitionNotes) }))
     .sort((left, right) => right.score - left.score)
 
   const best = ranked[0]
@@ -87,6 +143,7 @@ export function getLearnedRepairRecommendation(
     analysis.category,
     context?.provider,
     context?.route,
+    analysis.recognitionNotes,
   )
 }
 
@@ -129,7 +186,19 @@ export function analyzeErrorMessage(
 
   const autoRepairApplied = Boolean(context?.autoRepairApplied)
   const autoRepairTried = category === 'network' || category === 'timeout' || category === 'runtime' || category === 'policy'
-  const learned = predictRepairFromKnowledgeBase(context?.knowledgeBase ?? [], fingerprint, category, context?.provider, context?.route)
+  const recognitionNotes = extractRecognitionNotes(message, category, {
+    provider: context?.provider,
+    route: context?.route,
+    autoRepairApplied,
+  })
+  const learned = predictRepairFromKnowledgeBase(
+    context?.knowledgeBase ?? [],
+    fingerprint,
+    category,
+    context?.provider,
+    context?.route,
+    recognitionNotes,
+  )
 
   if (learned.suggestion) {
     suggestedFix = `Aprendizaje local sugiere: ${learned.suggestion}. ${suggestedFix}`
@@ -145,6 +214,7 @@ export function analyzeErrorMessage(
     `- Auto repair tried: ${autoRepairTried ? 'yes' : 'no'}`,
     `- Auto repair applied: ${autoRepairApplied ? 'yes' : 'no'}`,
     ...(learned.suggestion ? [`- Learned suggestion: ${learned.suggestion}`, `- Learned confidence: ${Math.round((learned.confidence ?? 0) * 100)}%`] : []),
+    ...(recognitionNotes.length > 0 ? [`- Recognition notes: ${recognitionNotes.join(' | ')}`] : []),
     '',
     '## Error message',
     compact(message),
@@ -160,6 +230,7 @@ export function analyzeErrorMessage(
     category,
     probableCause,
     suggestedFix,
+    recognitionNotes,
     autoRepairTried,
     autoRepairApplied,
     learnedSuggestion: learned.suggestion,
@@ -219,6 +290,14 @@ export function updateErrorKnowledgeBase(
             seenCount: item.seenCount + 1,
             successCount: item.successCount + (entry.analysis.autoRepairApplied ? 1 : 0),
             lastSeenAt: entry.at,
+            recognitionNotes: limitUnique([
+              ...(item.recognitionNotes ?? []),
+              ...(entry.analysis.recognitionNotes ?? []),
+            ], MAX_RECOGNITION_NOTES),
+            sampleMessages: limitUnique([
+              ...(item.sampleMessages ?? []),
+              entry.message,
+            ], MAX_SAMPLE_MESSAGES),
           }
         : item)
       .sort((left, right) => right.lastSeenAt - left.lastSeenAt)
@@ -233,6 +312,8 @@ export function updateErrorKnowledgeBase(
       provider: entry.provider,
       route: entry.route,
       recommendedAction,
+      recognitionNotes: entry.analysis.recognitionNotes,
+      sampleMessages: [entry.message],
       seenCount: 1,
       successCount: entry.analysis.autoRepairApplied ? 1 : 0,
       lastSeenAt: entry.at,

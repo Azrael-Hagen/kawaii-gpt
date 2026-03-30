@@ -20,6 +20,7 @@ const WEB_HINTS = [
 
 const CREATIVE_HINTS = ['cuento', 'historia', 'creative', 'poema', 'novela']
 const CODE_HINTS = ['código', 'code', 'bug', 'test', 'typescript', 'python', 'api']
+const CLOUD_RECOVERY_BACKOFF_MS = 90_000
 
 // ── Image generation detection ────────────────────────────────────────────────
 
@@ -117,6 +118,18 @@ export function selectRoute(settings: Settings, prompt: string): RouteDecision {
     }
   }
 
+  if (shouldBackoffCloud(settings)) {
+    return {
+      target: 'local',
+      reason: 'Smart mode: temporary cloud cooldown after recent network failure',
+      maxTokens: adaptMaxTokens(settings.localMaxTokens, text),
+      temperature: adaptTemperature(settings.temperature, text),
+      useWebSearch: false,
+      generateImage: false,
+      imagePrompt: '',
+    }
+  }
+
   const shouldUseLegacy = settings.enableLegacyEngine && (
     CREATIVE_HINTS.some(h => text.includes(h)) ||
     text.length >= settings.smartLongPromptThreshold * 1.35
@@ -199,5 +212,23 @@ function adaptTemperature(base: number, text: string): number {
   if (CODE_HINTS.some(h => text.includes(h))) return Math.min(base, 0.4)
   if (CREATIVE_HINTS.some(h => text.includes(h))) return Math.max(base, 0.9)
   return base
+}
+
+function shouldBackoffCloud(settings: Settings): boolean {
+  if (settings.provider !== 'smart') return false
+  if (!settings.autoFailover || !settings.localModel) return false
+
+  const last = settings.cloudDiagnostics
+  if (!last?.lastError || !last.lastAt) return false
+  if (Date.now() - last.lastAt > CLOUD_RECOVERY_BACKOFF_MS) return false
+
+  const lower = last.lastError.toLowerCase()
+  return (
+    lower.includes('failed to fetch') ||
+    lower.includes('network') ||
+    lower.includes('timed out') ||
+    lower.includes('timeout') ||
+    lower.includes('econnrefused')
+  )
 }
 

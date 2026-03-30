@@ -51,5 +51,32 @@ describe('errorDiagnostics', () => {
     expect(knowledgeBase).toHaveLength(1)
     expect(analysis.learnedSuggestion).toBe('switch_to_local')
     expect((analysis.learnedConfidence ?? 0) > 0).toBe(true)
+    expect(knowledgeBase[0].recognitionNotes?.some(note => note.includes('signal:failed-fetch'))).toBe(true)
+    expect(analysis.recognitionNotes.some(note => note.includes('category:network'))).toBe(true)
+  })
+
+  it('accumulates recognition notes and sample messages for repeated learned cases', () => {
+    const first = createErrorLogEntry({
+      source: 'chat',
+      message: 'Failed to fetch from OpenRouter (429)',
+      route: 'cloud->local',
+      provider: 'cloud • gpt-4.1-mini',
+      autoRepairApplied: true,
+    })
+
+    const second = createErrorLogEntry({
+      source: 'chat',
+      message: 'Failed to fetch from OpenRouter (503)',
+      route: 'cloud->local',
+      provider: 'cloud • gpt-4.1-mini',
+      autoRepairApplied: true,
+    })
+
+    const learnedOnce = updateErrorKnowledgeBase([], first)
+    const learnedTwice = updateErrorKnowledgeBase(learnedOnce, second)
+
+    expect(learnedTwice[0].seenCount).toBe(2)
+    expect((learnedTwice[0].recognitionNotes ?? []).length > 0).toBe(true)
+    expect(learnedTwice[0].sampleMessages).toHaveLength(2)
   })
 })

@@ -715,6 +715,12 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                           <div className="text-kawaii-text font-semibold">{item.category} → {item.recommendedAction}</div>
                           <div>Veces visto: {item.seenCount} · Exitos: {item.successCount}</div>
                           <div>Ruta: {item.route || 'n/a'} · Provider: {item.provider || 'n/a'}</div>
+                          {item.recognitionNotes && item.recognitionNotes.length > 0 && (
+                            <div>Notas: {item.recognitionNotes.slice(0, 4).join(' | ')}</div>
+                          )}
+                          {item.sampleMessages && item.sampleMessages.length > 0 && (
+                            <div>Muestras: {item.sampleMessages.slice(0, 2).join(' || ')}</div>
+                          )}
                         </div>
                       ))}
                     </div>

@@ -436,14 +436,7 @@ export function useChat(models: AIModel[] = []) {
       return
     }
 
-    const smartShouldPreferCloud = (() => {
-      if (settings.provider !== 'smart' || cloudQueue.length === 0) return false
-      const lower = routePrompt.toLowerCase()
-      if (lower.length < 28 && /hola|hey|gracias|ok|vale/.test(lower)) return false
-      return true
-    })()
-
-    const target = smartShouldPreferCloud ? 'cloud' : decision.target
+    const target = decision.target
 
     // ── Image generation branch ───────────────────────────────────────────────
     if (decision.generateImage && settings.imageGenEnabled) {
@@ -600,7 +593,7 @@ export function useChat(models: AIModel[] = []) {
     if (decision.useWebSearch) {
       try {
         const web = await searchWeb(text, settings.webSearchMaxResults)
-        effectiveMessages = prependWebContext(apiMessages, web)
+        effectiveMessages = prependWebContext(effectiveMessages, web)
       } catch { /* continue without web context */ }
     }
 

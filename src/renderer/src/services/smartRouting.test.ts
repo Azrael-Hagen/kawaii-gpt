@@ -32,6 +32,45 @@ describe('smartRouting', () => {
     expect(decision.target).toBe('local')
   })
 
+  it('temporarily routes smart mode to local after recent cloud network failures', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'smart' as const,
+      localModel: 'qwen2.5:0.5b',
+      autoFailover: true,
+      cloudDiagnostics: {
+        lastProvider: 'cloud • gpt-4.1-mini',
+        lastError: 'TypeError: Failed to fetch',
+        lastAt: Date.now(),
+        attempt: 1,
+        total: 1,
+      },
+    }
+
+    const decision = selectRoute(settings, 'Escribe una historia extensa con 8 escenas detalladas')
+    expect(decision.target).toBe('local')
+  })
+
+  it('keeps smart mode cloud routing when network failure is stale', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'smart' as const,
+      localModel: 'qwen2.5:0.5b',
+      autoFailover: true,
+      smartLongPromptThreshold: 60,
+      cloudDiagnostics: {
+        lastProvider: 'cloud • gpt-4.1-mini',
+        lastError: 'TypeError: Failed to fetch',
+        lastAt: Date.now() - 180_000,
+        attempt: 1,
+        total: 1,
+      },
+    }
+
+    const decision = selectRoute(settings, 'Escribe una historia extensa en diez actos con continuidad de personajes, subtramas, dialogos completos, conflicto central y desenlace con moraleja detallada')
+    expect(decision.target).toBe('cloud')
+  })
+
   it('resolves model by route', () => {
     const settings = {
       ...DEFAULT_SETTINGS,
