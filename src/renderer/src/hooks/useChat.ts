@@ -137,7 +137,7 @@ function buildCharacterImageStyleInstruction(profile: CharacterProfile): string 
   return chunks.join(' ')
 }
 
-function buildCharacterContextMessage(profile: CharacterProfile): ChatMessageInput | null {
+function buildCharacterContextMessage(profile: CharacterProfile, includeImageAttachment: boolean): ChatMessageInput | null {
   if (!profile.enabled) return null
 
   const lines = [
@@ -157,7 +157,7 @@ function buildCharacterContextMessage(profile: CharacterProfile): ChatMessageInp
     content: lines.join('\n'),
   }
 
-  if (!profile.profileImageDataUrl.trim()) {
+  if (!includeImageAttachment || !profile.profileImageDataUrl.trim()) {
     return baseMessage
   }
 
@@ -268,17 +268,7 @@ function isLikelyBenignPrompt(prompt: string): boolean {
 }
 
 async function filterHealthyCloudProviders(queue: CloudCfg[]): Promise<CloudCfg[]> {
-  const checks = await Promise.allSettled(
-    queue.map(async cfg => {
-      const ok = await new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey).checkConnection()
-      return ok ? cfg : null
-    }),
-  )
-  const healthy = checks
-    .filter((r): r is PromiseFulfilledResult<CloudCfg | null> => r.status === 'fulfilled')
-    .map(r => r.value)
-    .filter((v): v is CloudCfg => Boolean(v))
-  return healthy
+  return queue
 }
 
 function resolveProvider(
@@ -418,8 +408,7 @@ export function useChat(models: AIModel[] = []) {
       decision = selectRoute(settings, routePrompt)
       sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
       const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
-      const healthyCloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
-      cloudQueue = healthyCloudQueue.length > 0 ? healthyCloudQueue : builtCloudQueue
+      cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
     } catch (err) {
       const msg = summarizeProviderError(err)
       setError(msg)
@@ -583,7 +572,8 @@ export function useChat(models: AIModel[] = []) {
       currentConversation?.userMemory ?? [],
     )
 
-    const characterContext = buildCharacterContextMessage(settings.characterProfile)
+    const shouldAttachCharacterImage = apiMessages.filter(message => message.role === 'user').length <= 1
+    const characterContext = buildCharacterContextMessage(settings.characterProfile, shouldAttachCharacterImage)
     if (characterContext) {
       effectiveMessages = [characterContext, ...effectiveMessages]
     }

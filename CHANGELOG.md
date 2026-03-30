@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.3] - 2026-03-29
+### Changed
+- El envio de chat en cloud deja de hacer pre-chequeos de conectividad por proveedor en cada mensaje y prioriza envio inmediato con rotacion por error real
+- La imagen de referencia del personaje solo se adjunta como contexto interno en el primer turno del chat para reducir payload repetido
+
+### Fixed
+- Menor latencia y menos sensacion de cuelgue al iniciar respuestas en modo cloud/smart
+- Se reduce el costo de red y procesamiento cuando hay personaje visual activo en conversaciones largas
+
 ## [0.4.2] - 2026-03-29
 ### Added
 - Perfil de personaje ahora admite imagen de referencia persistida desde Settings para construir identidad visual consistente

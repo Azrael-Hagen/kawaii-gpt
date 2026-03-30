@@ -301,3 +301,22 @@
 **Next steps**:
 - Add import/export for full character presets including visual profile image
 - Add provider-level diagnostics showing when multimodal trait extraction was used vs skipped
+
+## [CP-15.1] 2026-03-29
+**Status**: Passed
+**Decisions made**:
+- Removed per-message cloud connectivity preflight checks and moved to direct execution with existing provider-rotation fallback on real failures
+- Kept character visual context injection but limited image attachment payload to early turn usage to avoid repeated heavy multimodal input
+- Preserved immediate character embodiment behavior through text identity context + system prompt reinforcement
+
+**Trade-offs**:
+- Skipping proactive health checks can surface provider errors at execution time, but significantly reduces startup latency for normal requests
+- Limiting repeated image attachments improves responsiveness but relies more on textual visual guide continuity after initial grounding
+
+**Debt deferred**:
+- Add optional cached provider health TTL instead of per-message checks to blend speed and proactive reliability
+- Add lightweight telemetry for time-to-first-token and provider failover frequency in-app
+
+**Next steps**:
+- Expose advanced toggle for cloud precheck policy (off/ttl/on-demand) in Settings
+- Add performance diagnostics panel with p50/p95 response startup metrics by route

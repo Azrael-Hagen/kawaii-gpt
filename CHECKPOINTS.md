@@ -219,3 +219,15 @@
 - [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
 **Status**: `[x]`
 **Notes**: Se priorizo coherencia visual entre generaciones sin acoplar la logica de negocio a SDKs de IA fuera de la capa de servicios/hooks.
+
+---
+
+## CP-15: Chat Responsiveness Optimization
+**Milestone**: Reducir bloqueos percibidos al iniciar respuestas y durante sesiones con personaje activo
+**Acceptance Criteria**:
+- [x] El flujo de envio evita pre-chequeos de salud cloud por mensaje que agregaban latencia innecesaria
+- [x] El contexto visual pesado del personaje no se repite en todos los turnos de la conversacion
+- [x] La activacion de personaje mantiene consistencia de rol sin degradar rendimiento del chat
+- [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
+**Status**: `[x]`
+**Notes**: Se priorizo tiempo a primer token y estabilidad percibida, manteniendo fallback por rotacion de proveedor ante errores reales de ejecucion.
