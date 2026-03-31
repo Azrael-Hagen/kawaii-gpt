@@ -1,4 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ErrorBoundary } from '@/diagnostics/ErrorBoundary'
+import { useDiagnosticsStore } from '@/diagnostics/diagnosticsStore'
 import Sidebar from '@/components/sidebar/Sidebar'
 import ChatWindow from '@/components/chat/ChatWindow'
 import ChatInput from '@/components/chat/ChatInput'
@@ -12,7 +14,7 @@ import { useModels } from '@/hooks/useModels'
 import { appendErrorLog, createErrorLogEntry, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
 import { ingestReleaseKnowledge } from '@/services/releaseLearning'
 
-export default function App() {
+function AppContent() {
   const [showSettings, setShowSettings] = useState(false)
   const { settings } = useSettingsStore()
   const [showWizard, setShowWizard] = useState(!settings.hasCompletedSetup)
@@ -27,6 +29,7 @@ export default function App() {
 
   const { models, status, refetch } = useModels()
   const { sendMessage, stopStreaming, isLoading, error, clearError } = useChat(models)
+  const debugMode = useDiagnosticsStore(s => s.debugMode)
 
   useEffect(() => {
     window.api?.getVersion?.()
@@ -95,6 +98,8 @@ export default function App() {
           <ChatWindow
             messages={activeConversation?.messages ?? []}
             isLoading={isLoading}
+            convId={activeConversation?.id}
+            debugMode={debugMode}
           />
 
           <ChatInput
@@ -141,5 +146,13 @@ export default function App() {
         onRefreshModels={refetch}
       />
     </div>
+  )
+}
+
+export default function App() {
+  return (
+    <ErrorBoundary>
+      <AppContent />
+    </ErrorBoundary>
   )
 }

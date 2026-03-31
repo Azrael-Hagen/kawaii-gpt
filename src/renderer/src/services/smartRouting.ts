@@ -144,22 +144,8 @@ export function selectRoute(settings: Settings, prompt: string): RouteDecision {
     }
   }
 
-  const shouldUseLegacy = settings.enableLegacyEngine && !shouldAvoidLegacyInSmart(settings) && (
-    CREATIVE_HINTS.some(h => text.includes(h)) ||
-    text.length >= settings.smartLongPromptThreshold * 1.35
-  )
 
-  if (shouldUseLegacy) {
-    return {
-      target: 'legacy',
-      reason: 'Smart mode routed to legacy for long or creative prompt',
-      maxTokens: adaptMaxTokens(settings.cloudMaxTokens, text),
-      temperature: adaptTemperature(settings.temperature, text),
-      useWebSearch: false,
-      generateImage: false,
-      imagePrompt: '',
-    }
-  }
+  // Legacy engine is never used in Smart mode. Only explicit selection uses legacy.
 
   if (text.length >= settings.smartLongPromptThreshold) {
     return {

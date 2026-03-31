@@ -7,11 +7,22 @@ import { formatFileSize, formatTime } from '@/utils/formatters'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useVoiceOutput } from '@/hooks/useVoiceOutput'
 
+
 interface Props {
   message: Message
+  convId?: string // for per-message actions
 }
 
-function MessageBubbleBase({ message }: Props) {
+import { useChatStore } from '@/store/chatStore'
+
+function MessageBubbleBase({ message, convId }: Props) {
+    const { deleteMessage } = useChatStore()
+
+    const onDelete = () => {
+      if (convId && message.id) {
+        deleteMessage(convId, message.id)
+      }
+    }
   const isUser = message.role === 'user'
   const { settings } = useSettingsStore()
   const { speak } = useVoiceOutput(settings)
@@ -39,6 +50,16 @@ function MessageBubbleBase({ message }: Props) {
           <div className="flex items-center justify-end gap-1 mt-1.5 text-[10px] text-white/70">
             <User size={10} />
             <span>{formatTime(message.timestamp)}</span>
+            {/* Delete button, only show on hover */}
+            {convId && (
+              <button
+                onClick={onDelete}
+                className="ml-2 opacity-0 group-hover:opacity-100 p-1 rounded text-white/60 hover:text-red-400 hover:bg-white/10 transition-all"
+                title="Borrar mensaje"
+              >
+                ×
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -58,6 +79,16 @@ function MessageBubbleBase({ message }: Props) {
         >
           <Copy size={12} />
         </button>
+        {/* Delete button, only show on hover */}
+        {convId && (
+          <button
+            onClick={onDelete}
+            className="absolute right-8 top-2 opacity-0 group-hover:opacity-100 p-1 rounded text-kawaii-muted hover:text-red-400 hover:bg-kawaii-surface-2 transition-all"
+            title="Borrar mensaje"
+          >
+            ×
+          </button>
+        )}
 
         {settings.voiceOutputEnabled && message.content && (
           <button

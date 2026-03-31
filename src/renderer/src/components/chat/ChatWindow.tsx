@@ -1,16 +1,20 @@
 import { useEffect, useRef } from 'react'
 import type { Message } from '@/types'
+
+interface Props {
+  messages: Message[]
+  isLoading: boolean
+  convId?: string // conversation id for per-message actions
+  debugMode?: boolean
+}
 import MessageBubble from './MessageBubble'
 import TypingIndicator from './TypingIndicator'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useVoiceOutput } from '@/hooks/useVoiceOutput'
 
-interface Props {
-  messages: Message[]
-  isLoading: boolean
-}
 
-export default function ChatWindow({ messages, isLoading }: Props) {
+
+const ChatWindow = ({ messages, isLoading, convId, debugMode }: Props) => {
   const bottomRef = useRef<HTMLDivElement>(null)
   const hydratedRef = useRef(false)
   const { settings } = useSettingsStore()
@@ -38,7 +42,15 @@ export default function ChatWindow({ messages, isLoading }: Props) {
 
   if (messages.length === 0) {
     return (
-      <div className="flex-1 flex items-center justify-center p-6 bg-kawaii-bg">
+      <div className="flex-1 flex flex-col items-center justify-center p-6 bg-kawaii-bg">
+        {Boolean(debugMode) && (
+          <div className="w-full max-w-4xl mb-4 p-3 rounded-lg border border-yellow-400 bg-yellow-50 text-yellow-900 text-xs shadow animate-fade-in">
+            <b>Diagnóstico:</b> Provider: <b>{settings.provider}</b> | Model: <b>{settings.defaultModel || settings.localModel || settings.cloudModel || settings.legacyModel || '(no model)'}</b>
+            {settings.provider === 'openai-compatible' && (<span> | Endpoint: <b>{settings.cloudBaseUrl}</b></span>)}
+            {settings.provider === 'ollama' && (<span> | Endpoint: <b>{settings.localBaseUrl}</b></span>)}
+            {settings.provider === 'legacy-engine' && (<span> | Endpoint: <b>{settings.legacyEngineBaseUrl}</b></span>)}
+          </div>
+        )}
         <div className="max-w-xl text-center animate-fade-in">
           <div className="text-6xl mb-4">🌸</div>
           <h1 className="text-3xl font-extrabold mb-3 gradient-text">Bienvenido a KawaiiGPT</h1>
@@ -68,11 +80,23 @@ export default function ChatWindow({ messages, isLoading }: Props) {
 
   return (
     <div className="flex-1 overflow-y-auto bg-kawaii-bg px-6 py-4">
+      {Boolean(debugMode) && (
+        <div className="w-full max-w-4xl mb-4 p-3 rounded-lg border border-yellow-400 bg-yellow-50 text-yellow-900 text-xs shadow animate-fade-in">
+          <b>Diagnóstico:</b> Provider: <b>{settings.provider}</b> | Model: <b>{settings.defaultModel || settings.localModel || settings.cloudModel || settings.legacyModel || '(no model)'}</b>
+          {settings.provider === 'openai-compatible' && (<span> | Endpoint: <b>{settings.cloudBaseUrl}</b></span>)}
+          {settings.provider === 'ollama' && (<span> | Endpoint: <b>{settings.localBaseUrl}</b></span>)}
+          {settings.provider === 'legacy-engine' && (<span> | Endpoint: <b>{settings.legacyEngineBaseUrl}</b></span>)}
+        </div>
+      )}
       <div className="max-w-4xl mx-auto space-y-4">
-        {messages.map(msg => <MessageBubble key={msg.id} message={msg} />)}
+        {messages.map((msg: Message) => (
+          <MessageBubble key={msg.id} message={msg} convId={convId} />
+        ))}
         {isLoading && <TypingIndicator />}
         <div ref={bottomRef} />
       </div>
     </div>
   )
 }
+
+export default ChatWindow

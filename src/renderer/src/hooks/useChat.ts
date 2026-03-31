@@ -1,4 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
+import { useDiagnosticChat } from './DiagnosticChat'
 import { useChatStore } from '@/store/chatStore'
 import { useSettingsStore } from '@/store/settingsStore'
 import { LegacyEngineClient, OpenAICompatibleClient, OllamaClient } from '@/services/aiClient'
@@ -392,6 +393,11 @@ async function buildCloudQueue(
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useChat(models: AIModel[] = []) {
+    // Timeout de seguridad para cualquier operación de chat/stream
+    const CHAT_TIMEOUT_MS = 60_000
+    const { startDiagnostic, log: diagLog, endDiagnostic } = useDiagnosticChat()
+    // Solo activar diagnóstico si settings.debugMode o settings.diagnosticMode
+    const enableDiag = (settings as any).debugMode || (settings as any).diagnosticMode
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -417,6 +423,11 @@ export function useChat(models: AIModel[] = []) {
   }, [updateSettings])
 
   const sendMessage = useCallback(async (content: string, attachments: MessageAttachment[] = []): Promise<void> => {
+      let diagId: string | null = null
+      if (enableDiag) {
+        diagId = startDiagnostic('🛠️ Diagnóstico chat')
+        diagLog(`Iniciando diagnóstico para mensaje: "${content}"`)
+      }
     const text = content.trim()
     if ((!text && attachments.length === 0) || isLoading) return
 
@@ -455,6 +466,22 @@ export function useChat(models: AIModel[] = []) {
     })
 
     setIsLoading(true)
+        let timeoutHandle: NodeJS.Timeout | null = null
+        let timedOut = false
+        // Timeout global para evitar cuelgues
+        await new Promise<void>((resolve) => {
+          timeoutHandle = setTimeout(() => {
+            timedOut = true
+            setIsLoading(false)
+            setError('⏰ Timeout: la operación de chat superó el límite de 60s.')
+            if (enableDiag) {
+              diagLog('Timeout global: operación de chat superó 60s, forzando cierre.')
+              endDiagnostic()
+            }
+            resolve()
+          }, CHAT_TIMEOUT_MS)
+        })
+      if (enableDiag) diagLog('Preparando proveedores y rutas...')
     abortRef.current = new AbortController()
 
     const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
@@ -485,6 +512,7 @@ export function useChat(models: AIModel[] = []) {
       const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
       cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
     } catch (err) {
+        if (enableDiag) diagLog(`Error en preparación: ${String(err)}`)
       const msg = summarizeProviderError(err)
       logError(msg, { route: settings.provider })
       setError(msg)
@@ -496,6 +524,9 @@ export function useChat(models: AIModel[] = []) {
     const target = decision.target
 
     // ── Image generation branch ───────────────────────────────────────────────
+      if (timedOut) return
+      if (enableDiag) diagLog('Generando imagen...')
+      if (enableDiag) diagLog(`Error generando imagen: ${String(err)}`)
     if (decision.generateImage && settings.imageGenEnabled) {
       updateMessage(convId, assistantId, 'Generando imagen... ✨', true)
       try {
@@ -636,6 +667,7 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Web search context ────────────────────────────────────────────────────
+      if (timedOut) return
     const currentConversation = useChatStore.getState().conversations.find(c => c.id === convId)
     let effectiveMessages: ChatMessageInput[] = prependUserMemoryContext(
       apiMessages,
@@ -655,6 +687,7 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Legacy engine mode ────────────────────────────────────────────────────
+      if (timedOut) return
     if (settings.provider === 'legacy-engine' || target === 'legacy') {
       const legacyModel = stripPrefix(settings.legacyModel || model || 'legacy-default')
       try {
@@ -739,10 +772,12 @@ export function useChat(models: AIModel[] = []) {
       return
     }
 
-    // ── Local mode (Ollama) ───────────────────────────────────────────────────
+    // ── Local mode (Ollama) with Smart failover ───────────────────────────────
+      if (timedOut) return
     if (target === 'local') {
       const localModel = stripPrefix(settings.localModel || model)
       const localClient = new OllamaClient(settings.localBaseUrl)
+      let localFailed = false
       try {
         if (settings.streamResponses) {
           let acc = ''
@@ -764,6 +799,8 @@ export function useChat(models: AIModel[] = []) {
           )
           updateMessage(convId!, assistantId, r, false, undefined, `local • ${localModel}`)
         }
+        setIsLoading(false)
+        return
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           const partial = useChatStore.getState()
@@ -775,14 +812,80 @@ export function useChat(models: AIModel[] = []) {
         }
         const msg = err instanceof Error ? err.message : String(err)
         setError(msg)
-        updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
-      } finally {
-        setIsLoading(false)
+        updateMessage(convId, assistantId, `⚠️ ${msg} → intentando fallback cloud...`, true)
+        localFailed = true
+        logError(msg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
       }
-      return
+      // Smart failover: try cloud, then legacy if enabled
+      if (localFailed) {
+        // Try cloud providers if available
+        if (cloudQueue.length > 0) {
+          for (let idx = 0; idx < cloudQueue.length; idx++) {
+            const cfg = cloudQueue[idx]
+            const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
+            try {
+              if (settings.streamResponses) {
+                let acc = ''
+                const streamUi = createStreamUpdateController((partial) => {
+                  updateMessage(convId!, assistantId, partial, true)
+                })
+                for await (const chunk of cloudClient.streamChat(
+                  cfg.model, effectiveMessages, sysPrompt,
+                  decision.temperature, cfg.maxTokens, abortRef.current!.signal,
+                )) {
+                  acc += chunk
+                  streamUi.push(acc, chunk)
+                }
+                streamUi.flush(acc)
+                updateMessage(convId!, assistantId, acc, false, undefined, cfg.label)
+              } else {
+                const r = await cloudClient.chat(
+                  cfg.model, effectiveMessages, sysPrompt, decision.temperature, cfg.maxTokens,
+                )
+                updateMessage(convId!, assistantId, r, false, undefined, cfg.label)
+              }
+              updateSettings({ cloudDiagnostics: null })
+              setIsLoading(false)
+              return
+            } catch (cloudErr) {
+              const errMsg = summarizeProviderError(cloudErr)
+              logError(errMsg, { provider: cfg.label, route: 'local->cloud', autoRepairApplied: true })
+              updateSettings({
+                cloudDiagnostics: {
+                  lastProvider: cfg.label,
+                  lastError: errMsg,
+                  lastAt: Date.now(),
+                  attempt: idx + 1,
+                  total: cloudQueue.length,
+                  code: extractStatusCode(errMsg),
+                },
+              })
+              if (isRetryableCloudError(cloudErr) && idx < cloudQueue.length - 1) {
+                const next = cloudQueue[idx + 1]
+                updateMessage(
+                  convId!, assistantId,
+                  `⚡ ${cfg.label}: ${errMsg} → rotando a ${next.label}...`,
+                  true,
+                )
+                continue
+              }
+            }
+          }
+        }
+        // If cloud fails or not available, do NOT try legacy in Smart mode
+        setIsLoading(false)
+        return
+      }
     }
 
     // ── Cloud mode with automatic provider rotation ───────────────────────────
+      if (timedOut) return
+      if (timedOut) return
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      if (enableDiag) {
+        diagLog('Chat finalizado correctamente.')
+        endDiagnostic()
+      }
     if (cloudQueue.length === 0) {
       const notice = '⚠️ Sin proveedor cloud disponible. Revisa API keys, endpoint y modelo en Ajustes ⚙️.'
       logError(notice, { route: 'cloud-queue' })
@@ -913,49 +1016,7 @@ export function useChat(models: AIModel[] = []) {
           }
         }
 
-        if ((shouldPreferLegacy || (!shouldPreferLocal && settings.enableLegacyEngine && settings.legacyModel)) && settings.enableLegacyEngine && settings.legacyModel && !avoidLegacyFallback) {
-          const legacyModel = stripPrefix(settings.legacyModel)
-          updateMessage(convId!, assistantId, `⚠️ Nube sin disponibilidad (${errMsg}) → probando motor Kawaii...`, true)
-          try {
-            const legacyClient = await ensureLegacyClient(settings, apiKey)
-            if (settings.streamResponses) {
-              let acc = ''
-              const streamUi = createStreamUpdateController((partial) => {
-                updateMessage(convId!, assistantId, partial, true)
-              })
-              for await (const chunk of legacyClient.streamChat(
-                legacyModel, effectiveMessages, sysPrompt,
-                decision.temperature, settings.cloudMaxTokens, abortRef.current!.signal,
-              )) {
-                acc += chunk
-                streamUi.push(acc, chunk)
-              }
-              streamUi.flush(acc)
-              updateMessage(convId!, assistantId, acc, false, undefined, `kawaii (fallback) • ${legacyModel}`)
-              logError(errMsg, { provider: `kawaii • ${legacyModel}`, route: 'cloud->legacy', autoRepairApplied: true })
-            } else {
-              const r = await legacyClient.chat(
-                legacyModel, effectiveMessages, sysPrompt, decision.temperature, settings.cloudMaxTokens,
-              )
-              updateMessage(convId!, assistantId, r, false, undefined, `kawaii (fallback) • ${legacyModel}`)
-              logError(errMsg, { provider: `kawaii • ${legacyModel}`, route: 'cloud->legacy', autoRepairApplied: true })
-            }
-            setIsLoading(false)
-            return
-          } catch (legacyErr) {
-            const legacyMsg = summarizeProviderError(legacyErr)
-            logError(legacyMsg, { provider: `kawaii • ${legacyModel}`, route: 'cloud->legacy' })
-            updateSettings({
-              cloudDiagnostics: {
-                lastProvider: `kawaii • ${legacyModel}`,
-                lastError: legacyMsg,
-                lastAt: Date.now(),
-                attempt: idx + 1,
-                total: cloudQueue.length + 1,
-              },
-            })
-          }
-        }
+        // In Smart mode, never fall back to legacy engine if cloud fails
 
         if (settings.autoFailover && settings.localModel && !avoidLocalFallback) {
           const localModel = stripPrefix(settings.localModel)

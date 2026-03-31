@@ -25,158 +25,168 @@ interface ChatState {
 
   addMessage:    (convId: string, msg: Omit<Message, 'id'>) => string
   updateMessage: (convId: string, msgId: string, content: string, isStreaming?: boolean, imageUrl?: string, routeInfo?: string) => void
+  deleteMessage: (convId: string, msgId: string) => void
   upsertUserMemory: (convId: string, memory: Omit<UserMemoryFact, 'id' | 'updatedAt'>) => void
   clearUserMemory: (convId: string) => void
   removeUserMemoryFact: (convId: string, memoryId: string) => void
 }
+const storeImpl = (set, get) => ({
+  conversations: [],
+  activeId:      null,
 
-// ── Store ─────────────────────────────────────────────────────────────────────
+  active: () => {
+    const { conversations, activeId } = get()
+    return conversations.find(c => c.id === activeId)
+  },
 
-export const useChatStore = create<ChatState>()(
-  persist(
-    (set, get) => ({
-      conversations: [],
-      activeId:      null,
+  create: (model, title = 'New Chat') => {
+    const id = genId()
+    set(s => ({
+      conversations:  [
+        { id, title, model, messages: [], userMemory: [], createdAt: Date.now(), updatedAt: Date.now() },
+        ...s.conversations,
+      ],
+      activeId: id,
+    }))
+    return id
+  },
 
-      active: () => {
-        const { conversations, activeId } = get()
-        return conversations.find(c => c.id === activeId)
-      },
+  remove: (id) =>
+    set(s => {
+      const rest = s.conversations.filter(c => c.id !== id)
+      return {
+        conversations: rest,
+        activeId:      s.activeId === id ? (rest[0]?.id ?? null) : s.activeId,
+      }
+    }),
 
-      create: (model, title = 'New Chat') => {
-        const id = genId()
-        set(s => ({
-          conversations:  [
-            { id, title, model, messages: [], userMemory: [], createdAt: Date.now(), updatedAt: Date.now() },
-            ...s.conversations,
-          ],
-          activeId: id,
-        }))
-        return id
-      },
+  setActive: (id) => set({ activeId: id }),
 
-      remove: (id) =>
-        set(s => {
-          const rest = s.conversations.filter(c => c.id !== id)
-          return {
-            conversations: rest,
-            activeId:      s.activeId === id ? (rest[0]?.id ?? null) : s.activeId,
-          }
-        }),
+  clear: (id) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === id ? { ...c, messages: [], userMemory: [], updatedAt: Date.now() } : c
+      ),
+    })),
 
-      setActive: (id) => set({ activeId: id }),
+  rename: (id, title) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === id ? { ...c, title } : c
+      ),
+    })),
 
-      clear: (id) =>
-        set(s => ({
-          conversations: s.conversations.map(c =>
-            c.id === id ? { ...c, messages: [], userMemory: [], updatedAt: Date.now() } : c
-          ),
-        })),
+  addMessage: (convId, msg) => {
+    const id = genId()
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === convId
+          ? { ...c, messages: [...c.messages, { ...msg, id }], updatedAt: Date.now() }
+          : c
+      ),
+    }))
+    return id
+  },
 
-      rename: (id, title) =>
-        set(s => ({
-          conversations: s.conversations.map(c =>
-            c.id === id ? { ...c, title } : c
-          ),
-        })),
+  updateMessage: (convId, msgId, content, isStreaming = false, imageUrl?, routeInfo?) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.map(m =>
+                m.id === msgId
+                  ? {
+                      ...m,
+                      content,
+                      isStreaming,
+                      ...(imageUrl   !== undefined ? { imageUrl   } : {}),
+                      ...(routeInfo  !== undefined ? { routeInfo  } : {}),
+                    }
+                  : m
+              ),
+              updatedAt: isStreaming ? c.updatedAt : Date.now(),
+            }
+          : c
+      ),
+    })),
 
-      addMessage: (convId, msg) => {
-        const id = genId()
-        set(s => ({
-          conversations: s.conversations.map(c =>
-            c.id === convId
-              ? { ...c, messages: [...c.messages, { ...msg, id }], updatedAt: Date.now() }
-              : c
-          ),
-        }))
-        return id
-      },
+  deleteMessage: (convId, msgId) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === convId
+          ? {
+              ...c,
+              messages: c.messages.filter(m => m.id !== msgId),
+              updatedAt: Date.now(),
+            }
+          : c
+      ),
+    })),
 
-      updateMessage: (convId, msgId, content, isStreaming = false, imageUrl?, routeInfo?) =>
-        set(s => ({
-          conversations: s.conversations.map(c =>
-            c.id === convId
-              ? {
-                  ...c,
-                  messages: c.messages.map(m =>
-                    m.id === msgId
-                      ? {
-                          ...m,
-                          content,
-                          isStreaming,
-                          ...(imageUrl   !== undefined ? { imageUrl   } : {}),
-                          ...(routeInfo  !== undefined ? { routeInfo  } : {}),
-                        }
-                      : m
-                  ),
-                  updatedAt: isStreaming ? c.updatedAt : Date.now(),
-                }
-              : c
-          ),
-        })),
+  upsertUserMemory: (convId, memory) =>
+    set(s => ({
+      conversations: s.conversations.map(c => {
+        if (c.id !== convId) return c
 
-      upsertUserMemory: (convId, memory) =>
-        set(s => ({
-          conversations: s.conversations.map(c => {
-            if (c.id !== convId) return c
+        const current = c.userMemory ?? []
+        const existing = current.find(item => item.key === memory.key)
 
-            const current = c.userMemory ?? []
-            const existing = current.find(item => item.key === memory.key)
-
-            const nextMemory = existing
-              ? current.map(item =>
-                  item.key === memory.key
-                    ? {
-                        ...item,
-                        value: memory.value,
-                        sourceMessageId: memory.sourceMessageId,
-                        updatedAt: Date.now(),
-                      }
-                    : item
-                )
-              : [
-                  ...current,
-                  {
-                    id: genId(),
-                    key: memory.key,
+        const nextMemory = existing
+          ? current.map(item =>
+              item.key === memory.key
+                ? {
+                    ...item,
                     value: memory.value,
                     sourceMessageId: memory.sourceMessageId,
                     updatedAt: Date.now(),
-                  },
-                ]
+                  }
+                : item
+            )
+          : [
+              ...current,
+              {
+                id: genId(),
+                key: memory.key,
+                value: memory.value,
+                sourceMessageId: memory.sourceMessageId,
+                updatedAt: Date.now(),
+              },
+            ]
 
-            return {
+        return {
+          ...c,
+          userMemory: nextMemory,
+          updatedAt: Date.now(),
+        }
+      }),
+    })),
+
+  clearUserMemory: (convId) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === convId
+          ? { ...c, userMemory: [], updatedAt: Date.now() }
+          : c
+      ),
+    })),
+
+  removeUserMemoryFact: (convId, memoryId) =>
+    set(s => ({
+      conversations: s.conversations.map(c =>
+        c.id === convId
+          ? {
               ...c,
-              userMemory: nextMemory,
+              userMemory: (c.userMemory ?? []).filter(item => item.id !== memoryId),
               updatedAt: Date.now(),
             }
-          }),
-        })),
+          : c
+      ),
+    })),
+})
 
-      clearUserMemory: (convId) =>
-        set(s => ({
-          conversations: s.conversations.map(c =>
-            c.id === convId
-              ? { ...c, userMemory: [], updatedAt: Date.now() }
-              : c
-          ),
-        })),
-
-      removeUserMemoryFact: (convId, memoryId) =>
-        set(s => ({
-          conversations: s.conversations.map(c =>
-            c.id === convId
-              ? {
-                  ...c,
-                  userMemory: (c.userMemory ?? []).filter(item => item.id !== memoryId),
-                  updatedAt: Date.now(),
-                }
-              : c
-          ),
-        })),
-    }),
-    { name: 'kawaii-gpt-chats', version: 1 }
-  )
+export const useChatStore = create<ChatState>()(
+  persist(storeImpl, { name: 'kawaii-gpt-chats', version: 1 })
 )
 
 // ── Helpers re-exported for convenience ──────────────────────────────────────
