@@ -35,6 +35,7 @@ const LOCAL_CONFLICT_WINDOW_MS = 10 * 60_000
 const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
+const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 18_000
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
@@ -165,6 +166,35 @@ function createStreamUpdateController(onPartial: (text: string) => void): {
     flush(accumulatedText) {
       onPartial(accumulatedText)
       lastUpdateAt = Date.now()
+    },
+  }
+}
+
+function createProviderAttemptAbort(baseSignal: AbortSignal, timeoutMs: number): {
+  signal: AbortSignal
+  wasTimedOut: () => boolean
+  clear: () => void
+} {
+  const controller = new AbortController()
+  let timedOut = false
+
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true
+    controller.abort(new DOMException('Provider timeout', 'AbortError'))
+  }, timeoutMs)
+
+  const onBaseAbort = () => {
+    controller.abort(baseSignal.reason)
+  }
+
+  baseSignal.addEventListener('abort', onBaseAbort, { once: true })
+
+  return {
+    signal: controller.signal,
+    wasTimedOut: () => timedOut,
+    clear: () => {
+      window.clearTimeout(timeoutId)
+      baseSignal.removeEventListener('abort', onBaseAbort)
     },
   }
 }
@@ -559,12 +589,6 @@ export function useChat(models: AIModel[] = []) {
     const timeoutHandle = window.setTimeout(() => {
       timeoutTriggered = true
       abortRef.current?.abort(new DOMException('Chat timeout', 'AbortError'))
-      const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
-      const detailed = withRepairSuggestion(useSettingsStore.getState().settings, timeoutMessage, 'chat-runtime', 'cloud')
-      setError(detailed)
-      updateMessage(convId!, assistantId, `⚠️ ${detailed}`, false)
-      logError(detailed, { provider: 'chat-runtime', route: 'cloud' })
-      setIsLoading(false)
       if (enableDiag) {
         diagLog('Timeout global alcanzado: se abortó la operación activa de chat.')
       }
@@ -798,7 +822,15 @@ export function useChat(models: AIModel[] = []) {
         }
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
-          if (timeoutTriggered) return
+          if (timeoutTriggered) {
+            const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
+            const detailed = withRepairSuggestion(useSettingsStore.getState().settings, timeoutMessage, 'chat-runtime', 'legacy')
+            setError(detailed)
+            updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
+            logError(detailed, { provider: 'chat-runtime', route: 'legacy' })
+            setIsLoading(false)
+            return
+          }
           const partial = useChatStore.getState()
             .conversations.find(c => c.id === convId)
             ?.messages.find(m => m.id === assistantId)?.content ?? ''
@@ -887,7 +919,15 @@ export function useChat(models: AIModel[] = []) {
         return
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
-          if (timeoutTriggered) return
+          if (timeoutTriggered) {
+            const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
+            const detailed = withRepairSuggestion(useSettingsStore.getState().settings, timeoutMessage, 'chat-runtime', 'local')
+            setError(detailed)
+            updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
+            logError(detailed, { provider: 'chat-runtime', route: 'local' })
+            setIsLoading(false)
+            return
+          }
           const partial = useChatStore.getState()
             .conversations.find(c => c.id === convId)
             ?.messages.find(m => m.id === assistantId)?.content ?? ''
@@ -986,6 +1026,7 @@ export function useChat(models: AIModel[] = []) {
     for (let idx = 0; idx < cloudQueue.length; idx++) {
       const cfg = cloudQueue[idx]
       const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
+      const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS)
 
       try {
         if (settings.streamResponses) {
@@ -995,7 +1036,7 @@ export function useChat(models: AIModel[] = []) {
           })
           for await (const chunk of cloudClient.streamChat(
             cfg.model, effectiveMessages, sysPrompt,
-            decision.temperature, cfg.maxTokens, abortRef.current!.signal,
+            decision.temperature, cfg.maxTokens, providerAttempt.signal,
           )) {
             acc += chunk
             streamUi.push(acc, chunk)
@@ -1019,13 +1060,85 @@ export function useChat(models: AIModel[] = []) {
         return // ✓ success
 
       } catch (err) {
+        const providerTimedOut = providerAttempt.wasTimedOut()
         // Abort → preserve partial content
         if ((err as Error).name === 'AbortError') {
-          if (timeoutTriggered) return
-          const partial = useChatStore.getState()
-            .conversations.find(c => c.id === convId)
-            ?.messages.find(m => m.id === assistantId)?.content ?? ''
-          updateMessage(convId, assistantId, partial, false)
+          if (!timeoutTriggered && !providerTimedOut) {
+            const partial = useChatStore.getState()
+              .conversations.find(c => c.id === convId)
+              ?.messages.find(m => m.id === assistantId)?.content ?? ''
+            updateMessage(convId, assistantId, partial, false)
+            setIsLoading(false)
+            return
+          }
+
+          const timeoutMessage = timeoutTriggered
+            ? '⏰ Timeout: la operación de chat superó el límite de 60s.'
+            : `Timeout del proveedor tras ${Math.round(CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS / 1000)}s sin respuesta útil.`
+          const errMsg = summarizeProviderError(timeoutMessage)
+          logError(errMsg, { provider: cfg.label, route: 'cloud' })
+          updateSettings({
+            cloudDiagnostics: {
+              lastProvider: cfg.label,
+              lastError: errMsg,
+              lastAt: Date.now(),
+              attempt: idx + 1,
+              total: cloudQueue.length,
+              code: 408,
+            },
+          })
+
+          if (idx < cloudQueue.length - 1) {
+            const next = cloudQueue[idx + 1]
+            updateMessage(
+              convId!, assistantId,
+              `⚡ ${cfg.label}: ${errMsg} → rotando a ${next.label}...`,
+              true,
+            )
+            continue
+          }
+
+          const detailedTimeout = withRepairSuggestion(useSettingsStore.getState().settings, errMsg, cfg.label, 'cloud')
+          if (settings.autoFailover && settings.localModel && !avoidLocalFallback) {
+            const localModel = stripPrefix(settings.localModel)
+            const localClient = new OllamaClient(settings.localBaseUrl)
+            updateMessage(convId!, assistantId, `⚠️ Nube agotada por timeout (${errMsg}) → usando modelo local...`, true)
+            try {
+              if (settings.streamResponses) {
+                let acc = ''
+                const streamUi = createStreamUpdateController((partial) => {
+                  updateMessage(convId!, assistantId, partial, true)
+                })
+                for await (const chunk of localClient.streamChat(
+                  localModel, effectiveMessages, sysPrompt,
+                  decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
+                )) {
+                  acc += chunk
+                  streamUi.push(acc, chunk)
+                }
+                streamUi.flush(acc)
+                updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback-timeout) • ${localModel}`)
+              } else {
+                const r = await localClient.chat(
+                  localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+                )
+                updateMessage(convId!, assistantId, r, false, undefined, `local (fallback-timeout) • ${localModel}`)
+              }
+              logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
+              setIsLoading(false)
+              return
+            } catch (fbErr) {
+              const fbMsg = summarizeProviderError(fbErr)
+              logError(fbMsg, { provider: settings.localBaseUrl, route: 'cloud->local' })
+              setError(fbMsg)
+              updateMessage(convId!, assistantId, `⚠️ ${fbMsg}`, false)
+              setIsLoading(false)
+              return
+            }
+          }
+
+          setError(detailedTimeout)
+          updateMessage(convId, assistantId, `⚠️ ${detailedTimeout}`, false)
           setIsLoading(false)
           return
         }
@@ -1155,6 +1268,8 @@ export function useChat(models: AIModel[] = []) {
         updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
         setIsLoading(false)
         return
+      } finally {
+        providerAttempt.clear()
       }
     }
 

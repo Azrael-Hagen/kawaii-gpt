@@ -52,4 +52,14 @@ describe('cloudCatalog', () => {
     expect(openrouter[0]).toBe('openai/dall-e-3')
     expect(together.includes('black-forest-labs/FLUX.1-schnell-Free')).toBe(true)
   })
+
+  it('ignores chat-only configured model in image candidates', () => {
+    const together = getImageModelCandidatesForBaseUrl(
+      'https://api.together.xyz/v1',
+      'meta-llama/Llama-3.1-8B-Instruct-Turbo',
+    )
+
+    expect(together[0]).toBe('black-forest-labs/FLUX.1-schnell-Free')
+    expect(together.includes('meta-llama/Llama-3.1-8B-Instruct-Turbo')).toBe(false)
+  })
 })

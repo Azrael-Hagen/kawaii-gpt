@@ -87,6 +87,14 @@ function normalizeUrl(baseUrl: string): string {
   return baseUrl.toLowerCase().replace(/\/+$/, '')
 }
 
+function isLikelyImageModelName(modelName: string): boolean {
+  return /(dall|gpt-image|image|imagen|flux|sdxl|stable-diffusion|playground|recraft|kandinsky|pixart)/i.test(modelName)
+}
+
+function isLikelyChatOnlyModelName(modelName: string): boolean {
+  return /(instruct|chat|llama|qwen|claude|sonnet|haiku|r1|gpt-4|gpt-5|deepseek|mixtral|gemini-.*(flash|pro))/i.test(modelName)
+}
+
 export function detectCloudProvider(baseUrl: string): KnownCloudProvider {
   const n = normalizeUrl(baseUrl)
   if (n.includes('openrouter.ai')) return 'openrouter'
@@ -119,12 +127,15 @@ export function providerSupportsImageGeneration(baseUrl: string): boolean {
 export function getImageModelCandidatesForBaseUrl(baseUrl: string, configuredModel: string): string[] {
   const provider = detectCloudProvider(baseUrl)
   const conf = normalizeImageModelForProvider(baseUrl, configuredModel)
+  const safeConfigured = conf && (!isLikelyChatOnlyModelName(conf) || isLikelyImageModelName(conf))
+    ? conf
+    : ''
   const preferred = IMAGE_CATALOG[provider].preferred
     .map(m => normalizeImageModelForProvider(baseUrl, m))
 
   if (!IMAGE_CATALOG[provider].supported) return []
 
-  const ordered = [conf, ...preferred].filter(Boolean)
+  const ordered = [safeConfigured, ...preferred].filter(Boolean)
   return Array.from(new Set(ordered))
 }
 
