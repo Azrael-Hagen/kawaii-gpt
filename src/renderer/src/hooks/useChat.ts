@@ -36,6 +36,9 @@ const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
 const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 18_000
+const CLOUD_CONTEXT_BUDGET_CHARS = 28_000
+const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
+const CONTEXT_BUDGET_MAX_MESSAGES = 16
 
 /**
  * Session-level blacklist for providers with fatal errors (auth/quota/model).
@@ -59,12 +62,24 @@ function isQuotaError(err: unknown): boolean {
     msg.includes('quota') ||
     msg.includes('exceeded') ||
     msg.includes('insufficient_quota') ||
-    msg.includes('too many requests') ||
-    (msg.includes('token') && msg.includes('limit'))
+    msg.includes('too many requests')
+  )
+}
+
+function isContextTooLargeError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('prompt tokens limit exceeded') ||
+    msg.includes('maximum context length') ||
+    msg.includes('context length exceeded') ||
+    msg.includes('input is too long') ||
+    msg.includes('reduce your prompt') ||
+    (msg.includes('token') && msg.includes('limit') && msg.includes('prompt'))
   )
 }
 
 function isRetryableCloudError(err: unknown): boolean {
+  if (isContextTooLargeError(err)) return false
   if (isQuotaError(err)) return true
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
   return (
@@ -90,6 +105,7 @@ function isRetryableCloudError(err: unknown): boolean {
  */
 function isFatalProviderError(err: unknown): boolean {
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  if (isContextTooLargeError(err)) return false
   return (
     msg.includes('401') ||
     msg.includes('unauthorized') ||
@@ -101,6 +117,54 @@ function isFatalProviderError(err: unknown): boolean {
     (msg.includes('404') && (msg.includes('model') || msg.includes('endpoint') || msg.includes('no endpoints'))) ||
     (msg.includes('403') && !msg.includes('timeout'))
   )
+}
+
+function estimateContextChars(message: ChatMessageInput): number {
+  const base = (message.content || '').length
+  const attachments = (message.attachments ?? []).reduce((acc, attachment) => {
+    const extracted = attachment.extractedText?.length ?? 0
+    const preview = attachment.previewText?.length ?? 0
+    const meta = attachment.name.length + attachment.mimeType.length + 64
+    return acc + Math.max(extracted, preview, meta)
+  }, 0)
+  return base + attachments
+}
+
+function trimMessagesForBudget(messages: ChatMessageInput[], budgetChars: number, maxMessages: number): ChatMessageInput[] {
+  if (messages.length === 0) return messages
+
+  const recent = messages.slice(-maxMessages)
+  const reversedKept: ChatMessageInput[] = []
+  let used = 0
+
+  for (let i = recent.length - 1; i >= 0; i--) {
+    const message = recent[i]
+    const available = budgetChars - used
+    if (available <= 240) break
+
+    let content = message.content || ''
+    if (content.length > available) {
+      const keptTail = Math.max(220, available - 40)
+      content = `[contexto recortado]\n${content.slice(-keptTail)}`
+    }
+
+    const keepAttachments = i >= recent.length - 2
+    const normalized: ChatMessageInput = keepAttachments
+      ? { ...message, content }
+      : { role: message.role, content }
+
+    used += estimateContextChars(normalized)
+    reversedKept.push(normalized)
+  }
+
+  const kept = reversedKept.reverse()
+  const latest = recent[recent.length - 1]
+  const tail = kept[kept.length - 1]
+  if (!tail || tail.role !== latest.role || tail.content !== latest.content) {
+    kept.push({ ...latest })
+  }
+
+  return kept
 }
 
 function summarizeProviderError(err: unknown): string {
@@ -838,6 +902,15 @@ export function useChat(models: AIModel[] = []) {
         const web = await searchWeb(text, settings.webSearchMaxResults)
         effectiveMessages = prependWebContext(effectiveMessages, web)
       } catch { /* continue without web context */ }
+    }
+
+    const contextBudget = target === 'local' ? LOCAL_CONTEXT_BUDGET_CHARS : CLOUD_CONTEXT_BUDGET_CHARS
+    const beforeTrimMessages = effectiveMessages.length
+    const beforeTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
+    effectiveMessages = trimMessagesForBudget(effectiveMessages, contextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
+    const afterTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
+    if (enableDiag && (beforeTrimMessages !== effectiveMessages.length || beforeTrimChars !== afterTrimChars)) {
+      diagLog(`Contexto recortado: ${beforeTrimMessages} mensajes (${beforeTrimChars} chars aprox) -> ${effectiveMessages.length} mensajes (${afterTrimChars} chars aprox).`)
     }
 
     // ── Legacy engine mode ────────────────────────────────────────────────────
