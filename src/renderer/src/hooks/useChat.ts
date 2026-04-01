@@ -37,6 +37,12 @@ const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
 const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 18_000
 
+/**
+ * Session-level blacklist for providers with fatal errors (auth/quota/model).
+ * Module-level: cleared on app restart, shared between hook instances and SettingsModal.
+ */
+export const sessionBlacklistedProviders = new Set<string>()
+
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
 function stripPrefix(name: string): string {
@@ -74,6 +80,26 @@ function isRetryableCloudError(err: unknown): boolean {
     msg.includes('network') ||
     msg.includes('timeout') ||
     msg.includes('fetch failed')
+  )
+}
+
+/**
+ * Returns true for errors that will not resolve with a retry to the same provider:
+ * auth (401), quota (402), forbidden (403), model-not-found (404).
+ * Does NOT include timeouts or transient network errors.
+ */
+function isFatalProviderError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('401') ||
+    msg.includes('unauthorized') ||
+    msg.includes('invalid api key') ||
+    msg.includes('no valid api key') ||
+    msg.includes('402') ||
+    msg.includes('credit limit') ||
+    msg.includes('insufficient_quota') ||
+    (msg.includes('404') && (msg.includes('model') || msg.includes('endpoint') || msg.includes('no endpoints'))) ||
+    (msg.includes('403') && !msg.includes('timeout'))
   )
 }
 
@@ -414,6 +440,11 @@ function rankCloudProviders(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
     score -= fails.network * 25
     if (cfg.model.toLowerCase().includes('openai/gpt-5.4-mini') || cfg.model.toLowerCase() === 'gpt-5.4-mini') {
       score += 35
+    }
+
+    // Session blacklist: providers confirmed fatal this session go to the very back
+    if (sessionBlacklistedProviders.has(cfg.baseUrl.toLowerCase())) {
+      score -= 500
     }
 
     return { cfg, score }
@@ -1175,6 +1206,11 @@ export function useChat(models: AIModel[] = []) {
             code: extractStatusCode(errMsg),
           },
         })
+
+        // Black-list providers with fatal non-recoverable errors for the rest of the session
+        if (isFatalProviderError(err)) {
+          sessionBlacklistedProviders.add(cfg.baseUrl.toLowerCase())
+        }
 
         // Retryable cloud error → rotate to next provider in queue
         if (isRetryableCloudError(err) && idx < cloudQueue.length - 1) {

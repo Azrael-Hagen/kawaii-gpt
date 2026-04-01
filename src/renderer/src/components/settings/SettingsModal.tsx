@@ -3,6 +3,7 @@ import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload, Trash2 
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { OllamaClient, OpenAICompatibleClient } from '@/services/aiClient'
+import { sessionBlacklistedProviders } from '@/hooks/useChat'
 import { listSpeechVoices } from '@/services/voice'
 import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
 import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus } from '@/types'
@@ -489,6 +490,16 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
       })
       main.detail = `${main.detail} -> auto-ajuste aplicado: cloudModel=openai/gpt-5.4-mini`
       main.issueType = 'model'
+    }
+
+    // Blacklist providers with fatal non-recoverable errors for the rest of the session
+    for (const r of results) {
+      if (r.issueType === 'auth' || r.issueType === 'quota' || r.issueType === 'model') {
+        const target = cloudTargets.find(t => t.id === r.id)
+        if (target?.baseUrl) {
+          sessionBlacklistedProviders.add(target.baseUrl.toLowerCase())
+        }
+      }
     }
 
     const report = buildProbeReport(results)
