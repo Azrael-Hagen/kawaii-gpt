@@ -36,9 +36,12 @@ const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
 const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 18_000
+const CHAT_TIMEOUT_MS = 60_000
 const CLOUD_CONTEXT_BUDGET_CHARS = 28_000
 const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
 const CONTEXT_BUDGET_MAX_MESSAGES = 16
+const ROTATION_JITTER_MIN_MS = 120
+const ROTATION_JITTER_MAX_MS = 450
 
 /**
  * Session-level blacklist for providers with fatal errors (auth/quota/model).
@@ -289,6 +292,29 @@ function createProviderAttemptAbort(baseSignal: AbortSignal, timeoutMs: number):
   }
 }
 
+async function withAbortableTimeout<T>(promise: Promise<T>, signal: AbortSignal, timeoutMs: number): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timeoutId = window.setTimeout(() => {
+      reject(new DOMException('Provider timeout', 'AbortError'))
+    }, timeoutMs)
+
+    const onAbort = () => {
+      window.clearTimeout(timeoutId)
+      reject(new DOMException('Provider timeout', 'AbortError'))
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+
+    promise
+      .then(resolve)
+      .catch(reject)
+      .finally(() => {
+        window.clearTimeout(timeoutId)
+        signal.removeEventListener('abort', onAbort)
+      })
+  })
+}
+
 function buildCharacterImageStyleInstruction(profile: CharacterProfile): string {
   if (!profile.enabled) return ''
 
@@ -446,6 +472,91 @@ function isProviderMatch(providerText: string, cfg: CloudCfg): boolean {
   const lower = providerText.toLowerCase()
   const shortLabel = cfg.label.split(' • ')[0].toLowerCase()
   return lower.includes(cfg.baseUrl.toLowerCase()) || lower.includes(shortLabel)
+}
+
+function getNetworkRttMs(): number {
+  const nav = navigator as unknown as { connection?: { rtt?: number } }
+  const rtt = Number(nav.connection?.rtt ?? 0)
+  return Number.isFinite(rtt) && rtt > 0 ? rtt : 0
+}
+
+function getProviderLatencyMs(settings: Settings, baseUrl?: string): number {
+  const target = (baseUrl ?? '').toLowerCase()
+  if (!target) return 0
+  const now = Date.now()
+  const connectivity = settings.cloudConnectivity ?? []
+  const sample = connectivity.find(item => {
+    if (!item.checkedAt || now - item.checkedAt > CLOUD_HEALTH_WINDOW_MS) return false
+    const extracted = extractBaseUrlFromConnectivityLabel(item.label).toLowerCase()
+    return extracted === target
+  })
+  return sample?.latencyMs ?? 0
+}
+
+function computeAdaptiveProviderTimeoutMs(settings: Settings, baseUrl?: string): number {
+  let timeoutMs = CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS
+  const providerLatency = getProviderLatencyMs(settings, baseUrl)
+  const rtt = getNetworkRttMs()
+
+  if (providerLatency >= 800) timeoutMs += 4_000
+  if (providerLatency >= 1_500) timeoutMs += 8_000
+  if (providerLatency >= 2_500) timeoutMs += 8_000
+
+  if (rtt >= 300) timeoutMs += 2_000
+  if (rtt >= 700) timeoutMs += 4_000
+  if (rtt >= 1_200) timeoutMs += 8_000
+
+  return Math.max(12_000, Math.min(45_000, timeoutMs))
+}
+
+function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number): number {
+  let timeoutMs = CHAT_TIMEOUT_MS
+  const rtt = getNetworkRttMs()
+  const extraByProviders = Math.max(0, providerCount - 1) * 4_000
+  timeoutMs += Math.min(12_000, extraByProviders)
+
+  if (rtt >= 300) timeoutMs += 4_000
+  if (rtt >= 700) timeoutMs += 8_000
+  if (rtt >= 1_200) timeoutMs += 12_000
+
+  return Math.max(CHAT_TIMEOUT_MS, Math.min(120_000, timeoutMs))
+}
+
+function computeAdaptiveMaxTokens(baseTokens: number, contextChars: number, settings: Settings, baseUrl?: string): number {
+  let next = baseTokens
+  const providerLatency = getProviderLatencyMs(settings, baseUrl)
+  const rtt = getNetworkRttMs()
+
+  if (contextChars >= 12_000) next = Math.min(next, 700)
+  if (contextChars >= 20_000) next = Math.min(next, 520)
+  if (contextChars >= 28_000) next = Math.min(next, 360)
+
+  if (providerLatency >= 1_200) next = Math.min(next, 560)
+  if (providerLatency >= 2_000) next = Math.min(next, 420)
+
+  if (rtt >= 700) next = Math.min(next, 560)
+  if (rtt >= 1_200) next = Math.min(next, 420)
+
+  return Math.max(120, next)
+}
+
+async function waitRotationJitter(signal: AbortSignal): Promise<void> {
+  const span = Math.max(0, ROTATION_JITTER_MAX_MS - ROTATION_JITTER_MIN_MS)
+  const jitterMs = ROTATION_JITTER_MIN_MS + Math.floor(Math.random() * (span + 1))
+
+  await new Promise<void>(resolve => {
+    const timer = window.setTimeout(() => {
+      signal.removeEventListener('abort', onAbort)
+      resolve()
+    }, jitterMs)
+
+    const onAbort = () => {
+      window.clearTimeout(timer)
+      resolve()
+    }
+
+    signal.addEventListener('abort', onAbort, { once: true })
+  })
 }
 
 function countRecentProviderFailures(settings: Settings, cfg: CloudCfg): { auth: number; timeout: number; network: number } {
@@ -619,8 +730,6 @@ async function buildCloudQueue(
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useChat(models: AIModel[] = []) {
-  // Timeout de seguridad para cualquier operación de chat/stream
-  const CHAT_TIMEOUT_MS = 60_000
   const { startDiagnostic, log: diagLog, endDiagnostic } = useDiagnosticChat()
   const { activeId, addMessage, updateMessage, create, rename, upsertUserMemory } = useChatStore()
   const { settings, update: updateSettings } = useSettingsStore()
@@ -695,13 +804,15 @@ export function useChat(models: AIModel[] = []) {
     if (enableDiag) diagLog('Preparando proveedores y rutas...')
     abortRef.current = new AbortController()
     let timeoutTriggered = false
+    const providerSlots = 1 + (settings.additionalProviders ?? []).filter(item => item.enabled && item.baseUrl).length
+    const adaptiveChatTimeoutMs = computeAdaptiveChatTimeoutMs(settings, providerSlots)
     const timeoutHandle = window.setTimeout(() => {
       timeoutTriggered = true
       abortRef.current?.abort(new DOMException('Chat timeout', 'AbortError'))
       if (enableDiag) {
-        diagLog('Timeout global alcanzado: se abortó la operación activa de chat.')
+        diagLog(`Timeout global alcanzado (${Math.round(adaptiveChatTimeoutMs / 1000)}s): se abortó la operación activa de chat.`)
       }
-    }, CHAT_TIMEOUT_MS)
+    }, adaptiveChatTimeoutMs)
 
     try {
       const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
@@ -909,6 +1020,7 @@ export function useChat(models: AIModel[] = []) {
     const beforeTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
     effectiveMessages = trimMessagesForBudget(effectiveMessages, contextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
     const afterTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
+    const effectiveContextChars = afterTrimChars
     if (enableDiag && (beforeTrimMessages !== effectiveMessages.length || beforeTrimChars !== afterTrimChars)) {
       diagLog(`Contexto recortado: ${beforeTrimMessages} mensajes (${beforeTrimChars} chars aprox) -> ${effectiveMessages.length} mensajes (${afterTrimChars} chars aprox).`)
     }
@@ -941,7 +1053,7 @@ export function useChat(models: AIModel[] = []) {
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           if (timeoutTriggered) {
-            const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
+            const timeoutMessage = `⏰ Timeout: la operación de chat superó el límite de ${Math.round(adaptiveChatTimeoutMs / 1000)}s.`
             const detailed = withRepairSuggestion(useSettingsStore.getState().settings, timeoutMessage, 'chat-runtime', 'legacy')
             setError(detailed)
             updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
@@ -1039,7 +1151,7 @@ export function useChat(models: AIModel[] = []) {
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           if (timeoutTriggered) {
-            const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
+            const timeoutMessage = `⏰ Timeout: la operación de chat superó el límite de ${Math.round(adaptiveChatTimeoutMs / 1000)}s.`
             const detailed = withRepairSuggestion(useSettingsStore.getState().settings, timeoutMessage, 'chat-runtime', 'local')
             setError(detailed)
             updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
@@ -1067,6 +1179,9 @@ export function useChat(models: AIModel[] = []) {
           for (let idx = 0; idx < cloudQueue.length; idx++) {
             const cfg = cloudQueue[idx]
             const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
+            const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
+            const providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+            const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
             try {
               if (settings.streamResponses) {
                 let acc = ''
@@ -1075,7 +1190,7 @@ export function useChat(models: AIModel[] = []) {
                 })
                 for await (const chunk of cloudClient.streamChat(
                   cfg.model, effectiveMessages, sysPrompt,
-                  decision.temperature, cfg.maxTokens, abortRef.current!.signal,
+                  decision.temperature, providerMaxTokens, providerAttempt.signal,
                 )) {
                   acc += chunk
                   streamUi.push(acc, chunk)
@@ -1083,8 +1198,12 @@ export function useChat(models: AIModel[] = []) {
                 streamUi.flush(acc)
                 updateMessage(convId!, assistantId, acc, false, undefined, cfg.label)
               } else {
-                const r = await cloudClient.chat(
-                  cfg.model, effectiveMessages, sysPrompt, decision.temperature, cfg.maxTokens,
+                const r = await withAbortableTimeout(
+                  cloudClient.chat(
+                    cfg.model, effectiveMessages, sysPrompt, decision.temperature, providerMaxTokens,
+                  ),
+                  providerAttempt.signal,
+                  providerTimeoutMs,
                 )
                 updateMessage(convId!, assistantId, r, false, undefined, cfg.label)
               }
@@ -1111,8 +1230,11 @@ export function useChat(models: AIModel[] = []) {
                   `⚡ ${cfg.label}: ${errMsg} → rotando a ${next.label}...`,
                   true,
                 )
+                await waitRotationJitter(abortRef.current!.signal)
                 continue
               }
+            } finally {
+              providerAttempt.clear()
             }
           }
         }
@@ -1145,7 +1267,9 @@ export function useChat(models: AIModel[] = []) {
     for (let idx = 0; idx < cloudQueue.length; idx++) {
       const cfg = cloudQueue[idx]
       const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
-      const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS)
+      const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
+      const providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+      const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
 
       try {
         if (settings.streamResponses) {
@@ -1155,7 +1279,7 @@ export function useChat(models: AIModel[] = []) {
           })
           for await (const chunk of cloudClient.streamChat(
             cfg.model, effectiveMessages, sysPrompt,
-            decision.temperature, cfg.maxTokens, providerAttempt.signal,
+            decision.temperature, providerMaxTokens, providerAttempt.signal,
           )) {
             acc += chunk
             streamUi.push(acc, chunk)
@@ -1166,8 +1290,12 @@ export function useChat(models: AIModel[] = []) {
           }
           updateMessage(convId!, assistantId, acc, false, undefined, cfg.label)
         } else {
-          const r = await cloudClient.chat(
-            cfg.model, effectiveMessages, sysPrompt, decision.temperature, cfg.maxTokens,
+          const r = await withAbortableTimeout(
+            cloudClient.chat(
+              cfg.model, effectiveMessages, sysPrompt, decision.temperature, providerMaxTokens,
+            ),
+            providerAttempt.signal,
+            providerTimeoutMs,
           )
           if (isLikelyPolicyRefusal(r) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
@@ -1192,8 +1320,8 @@ export function useChat(models: AIModel[] = []) {
           }
 
           const timeoutMessage = timeoutTriggered
-            ? '⏰ Timeout: la operación de chat superó el límite de 60s.'
-            : `Timeout del proveedor tras ${Math.round(CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS / 1000)}s sin respuesta útil.`
+            ? `⏰ Timeout: la operación de chat superó el límite de ${Math.round(adaptiveChatTimeoutMs / 1000)}s.`
+            : `Timeout del proveedor tras ${Math.round(providerTimeoutMs / 1000)}s sin respuesta útil.`
           const errMsg = summarizeProviderError(timeoutMessage)
           logError(errMsg, { provider: cfg.label, route: 'cloud' })
           updateSettings({
@@ -1214,6 +1342,7 @@ export function useChat(models: AIModel[] = []) {
               `⚡ ${cfg.label}: ${errMsg} → rotando a ${next.label}...`,
               true,
             )
+            await waitRotationJitter(abortRef.current!.signal)
             continue
           }
 
@@ -1293,6 +1422,7 @@ export function useChat(models: AIModel[] = []) {
             `⚡ ${cfg.label}: ${errMsg} → rotando a ${next.label}...`,
             true,
           )
+          await waitRotationJitter(abortRef.current!.signal)
           continue
         }
 
