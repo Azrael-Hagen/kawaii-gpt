@@ -37,6 +37,7 @@ const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
 const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 18_000
 const CHAT_TIMEOUT_MS = 60_000
+const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 14_000
 const CLOUD_CONTEXT_BUDGET_CHARS = 28_000
 const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
 const CONTEXT_BUDGET_MAX_MESSAGES = 16
@@ -203,18 +204,26 @@ function hasRecentLocalRuntimeConflict(settings: Settings): boolean {
   const logs = settings.errorLogs ?? []
   if (logs.length === 0) return false
 
-  return logs.some(entry => {
+  let transientLocalFails = 0
+
+  const hasHardConflict = logs.some(entry => {
     if (!entry.at || Date.now() - entry.at > LOCAL_CONFLICT_WINDOW_MS) return false
     const route = (entry.route ?? '').toLowerCase()
     if (!(route === 'local' || route.includes('->local'))) return false
 
     const msg = (entry.message ?? '').toLowerCase()
+    if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('failed to fetch') || msg.includes('econnrefused')) {
+      transientLocalFails += 1
+    }
+
     return (
       msg.includes('memory layout cannot be allocated') ||
       msg.includes('out of memory') ||
       msg.includes('cannot allocate')
     )
   })
+
+  return hasHardConflict || transientLocalFails >= 2
 }
 
 function hasRecentLegacyConflict(settings: Settings): boolean {
@@ -507,6 +516,16 @@ function computeAdaptiveProviderTimeoutMs(settings: Settings, baseUrl?: string):
   if (rtt >= 1_200) timeoutMs += 8_000
 
   return Math.max(12_000, Math.min(45_000, timeoutMs))
+}
+
+function computeLocalAttemptTimeoutMs(settings: Settings, isSmartRoute: boolean): number {
+  let timeoutMs = isSmartRoute ? LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS : 28_000
+  const rtt = getNetworkRttMs()
+
+  if (rtt >= 300) timeoutMs += 2_000
+  if (rtt >= 700) timeoutMs += 4_000
+
+  return Math.max(10_000, Math.min(35_000, timeoutMs))
 }
 
 function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number): number {
@@ -1124,6 +1143,8 @@ export function useChat(models: AIModel[] = []) {
     if (target === 'local') {
       const localModel = resolveLocalModelName(settings, models) || stripPrefix(settings.localModel || model)
       const localClient = new OllamaClient(settings.localBaseUrl)
+      const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(useSettingsStore.getState().settings, settings.provider === 'smart')
+      const localAttempt = createProviderAttemptAbort(abortRef.current!.signal, localAttemptTimeoutMs)
       let localFailed = false
       try {
         if (settings.streamResponses) {
@@ -1133,7 +1154,7 @@ export function useChat(models: AIModel[] = []) {
           })
           for await (const chunk of localClient.streamChat(
             localModel, effectiveMessages, sysPrompt,
-            decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
+            decision.temperature, settings.localMaxTokens, localAttempt.signal,
           )) {
             acc += chunk
             streamUi.push(acc, chunk)
@@ -1141,14 +1162,19 @@ export function useChat(models: AIModel[] = []) {
           streamUi.flush(acc)
           updateMessage(convId!, assistantId, acc, false, undefined, `local • ${localModel}`)
         } else {
-          const r = await localClient.chat(
-            localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+          const r = await withAbortableTimeout(
+            localClient.chat(
+              localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+            ),
+            localAttempt.signal,
+            localAttemptTimeoutMs,
           )
           updateMessage(convId!, assistantId, r, false, undefined, `local • ${localModel}`)
         }
         setIsLoading(false)
         return
       } catch (err) {
+        const localProviderTimedOut = localAttempt.wasTimedOut()
         if ((err as Error).name === 'AbortError') {
           if (timeoutTriggered) {
             const timeoutMessage = `⏰ Timeout: la operación de chat superó el límite de ${Math.round(adaptiveChatTimeoutMs / 1000)}s.`
@@ -1159,18 +1185,30 @@ export function useChat(models: AIModel[] = []) {
             setIsLoading(false)
             return
           }
-          const partial = useChatStore.getState()
-            .conversations.find(c => c.id === convId)
-            ?.messages.find(m => m.id === assistantId)?.content ?? ''
-          updateMessage(convId, assistantId, partial, false)
-          setIsLoading(false)
-          return
+
+          if (localProviderTimedOut && settings.provider === 'smart') {
+            const localTimeoutMsg = `Timeout local tras ${Math.round(localAttemptTimeoutMs / 1000)}s sin respuesta útil.`
+            updateMessage(convId, assistantId, `⚠️ ${localTimeoutMsg} → intentando fallback cloud...`, true)
+            logError(localTimeoutMsg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
+            localFailed = true
+          } else {
+            const partial = useChatStore.getState()
+              .conversations.find(c => c.id === convId)
+              ?.messages.find(m => m.id === assistantId)?.content ?? ''
+            updateMessage(convId, assistantId, partial, false)
+            setIsLoading(false)
+            return
+          }
         }
-        const msg = err instanceof Error ? err.message : String(err)
-        setError(msg)
-        updateMessage(convId, assistantId, `⚠️ ${msg} → intentando fallback cloud...`, true)
-        localFailed = true
-        logError(msg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
+        if ((err as Error).name !== 'AbortError') {
+          const msg = err instanceof Error ? err.message : String(err)
+          setError(msg)
+          updateMessage(convId, assistantId, `⚠️ ${msg} → intentando fallback cloud...`, true)
+          localFailed = true
+          logError(msg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
+        }
+      } finally {
+        localAttempt.clear()
       }
       // Smart failover: try cloud, then legacy if enabled
       if (localFailed) {
