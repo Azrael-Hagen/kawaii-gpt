@@ -64,6 +64,8 @@ interface ModelProbeResult {
   ok: boolean
   latencyMs: number
   detail: string
+  phase: 'stream-first-token' | 'chat-fallback'
+  issueType: 'timeout' | 'auth' | 'quota' | 'model' | 'network' | 'unknown' | 'none'
 }
 
 export default function SettingsModal({ open, onClose, models, status, onRefreshModels }: Props) {
@@ -301,6 +303,38 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
     })
   }
 
+  const classifyProbeIssue = (detail: string): ModelProbeResult['issueType'] => {
+    const lower = detail.toLowerCase()
+    if (lower.includes('timeout') || lower.includes('timed out')) return 'timeout'
+    if (lower.includes('401') || lower.includes('invalid api key') || lower.includes('unauthorized')) return 'auth'
+    if (lower.includes('402') || lower.includes('credit limit') || lower.includes('quota')) return 'quota'
+    if (lower.includes('model not found') || lower.includes('no endpoints found') || lower.includes('no encuentra el modelo') || lower.includes('404')) return 'model'
+    if (lower.includes('failed to fetch') || lower.includes('network') || lower.includes('econnrefused')) return 'network'
+    if (lower.includes('respuesta válida') || lower.includes('primer token recibido')) return 'none'
+    return 'unknown'
+  }
+
+  const buildProbeReport = (rows: ModelProbeResult[]): string => {
+    const now = formatTime(Date.now())
+    const lines = rows.map(r => {
+      const status = r.ok ? 'OK' : 'FAIL'
+      return `- ${status} | ${r.label} | ${r.model} | ${r.latencyMs}ms | ${r.phase} | ${r.issueType} | ${r.detail}`
+    })
+    return [`Benchmark cloud/local - ${now}`, ...lines].join('\n')
+  }
+
+  const probeCloudFirstToken = async (client: OpenAICompatibleClient, model: string, prompt: string, timeoutMs: number): Promise<string> => {
+    const op = (async () => {
+      for await (const chunk of client.streamChat(model, [{ role: 'user', content: prompt }], undefined, 0.1, 24)) {
+        const compact = chunk.replace(/\s+/g, ' ').trim()
+        if (compact) return compact
+      }
+      throw new Error('stream finalizado sin contenido')
+    })()
+
+    return await withProbeTimeout(op, timeoutMs)
+  }
+
   const runModelBenchmarks = async () => {
     setBenchmarkingModels(true)
     setModelProbeResults([])
@@ -348,35 +382,61 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
           ok: false,
           latencyMs: Date.now() - startedAt,
           detail: 'Sin API key',
+          phase: 'chat-fallback',
+          issueType: 'auth',
         })
         continue
       }
 
+      const client = new OpenAICompatibleClient(target.baseUrl, target.key)
       try {
-        const client = new OpenAICompatibleClient(target.baseUrl, target.key)
-        const reply = await withProbeTimeout(
-          client.chat(target.model, [{ role: 'user', content: prompt }], undefined, 0.1, 40),
-          cloudTimeoutMs,
-        )
-        const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
+        const firstToken = await probeCloudFirstToken(client, target.model, prompt, cloudTimeoutMs)
         results.push({
           id: target.id,
           label: target.label,
           model: target.model,
-          ok: normalized.includes('OK'),
+          ok: true,
           latencyMs: Date.now() - startedAt,
-          detail: normalized.includes('OK') ? 'Respuesta válida' : `Respuesta inesperada: ${reply.slice(0, 80)}`,
+          detail: `Primer token recibido: ${firstToken.slice(0, 50)}`,
+          phase: 'stream-first-token',
+          issueType: 'none',
         })
-      } catch (err) {
-        const msg = err instanceof Error ? err.message : String(err)
-        results.push({
-          id: target.id,
-          label: target.label,
-          model: target.model,
-          ok: false,
-          latencyMs: Date.now() - startedAt,
-          detail: msg.replace(/\s+/g, ' ').slice(0, 140),
-        })
+      } catch (streamErr) {
+        const streamMsg = streamErr instanceof Error ? streamErr.message : String(streamErr)
+        try {
+          const reply = await withProbeTimeout(
+            client.chat(target.model, [{ role: 'user', content: prompt }], undefined, 0.1, 32),
+            cloudTimeoutMs,
+          )
+          const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
+          const ok = normalized.includes('OK')
+          const detail = ok
+            ? 'Respuesta válida (modo chat fallback)'
+            : `Respuesta inesperada: ${reply.slice(0, 80)}`
+          results.push({
+            id: target.id,
+            label: target.label,
+            model: target.model,
+            ok,
+            latencyMs: Date.now() - startedAt,
+            detail,
+            phase: 'chat-fallback',
+            issueType: classifyProbeIssue(detail),
+          })
+        } catch (chatErr) {
+          const chatMsg = chatErr instanceof Error ? chatErr.message : String(chatErr)
+          const detail = `stream: ${streamMsg.replace(/\s+/g, ' ').slice(0, 90)} | chat: ${chatMsg.replace(/\s+/g, ' ').slice(0, 90)}`
+          results.push({
+            id: target.id,
+            label: target.label,
+            model: target.model,
+            ok: false,
+            latencyMs: Date.now() - startedAt,
+            detail,
+            phase: 'chat-fallback',
+            issueType: classifyProbeIssue(detail),
+          })
+        }
       }
     }
 
@@ -389,23 +449,29 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
           localTimeoutMs,
         )
         const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
+        const detail = normalized.includes('OK') ? 'Respuesta válida' : `Respuesta inesperada: ${reply.slice(0, 80)}`
         results.push({
           id: target.id,
           label: target.label,
           model: target.model,
           ok: normalized.includes('OK'),
           latencyMs: Date.now() - startedAt,
-          detail: normalized.includes('OK') ? 'Respuesta válida' : `Respuesta inesperada: ${reply.slice(0, 80)}`,
+          detail,
+          phase: 'chat-fallback',
+          issueType: classifyProbeIssue(detail),
         })
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err)
+        const detail = msg.replace(/\s+/g, ' ').slice(0, 140)
         results.push({
           id: target.id,
           label: target.label,
           model: target.model,
           ok: false,
           latencyMs: Date.now() - startedAt,
-          detail: msg.replace(/\s+/g, ' ').slice(0, 140),
+          detail,
+          phase: 'chat-fallback',
+          issueType: classifyProbeIssue(detail),
         })
       }
     }
@@ -422,7 +488,19 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
         defaultModel: 'openai/gpt-5.4-mini',
       })
       main.detail = `${main.detail} -> auto-ajuste aplicado: cloudModel=openai/gpt-5.4-mini`
+      main.issueType = 'model'
     }
+
+    const report = buildProbeReport(results)
+    update({
+      cloudDiagnostics: {
+        lastProvider: 'benchmark',
+        lastError: report,
+        lastAt: Date.now(),
+        attempt: results.filter(r => !r.ok).length,
+        total: results.length,
+      },
+    })
 
     setModelProbeResults(results)
     setBenchmarkingModels(false)
@@ -781,7 +859,16 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
 
                 {modelProbeResults.length > 0 && (
                   <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs space-y-1.5">
-                    <div className="font-semibold text-kawaii-text">Benchmark de mensaje corto por modelo</div>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="font-semibold text-kawaii-text">Benchmark de mensaje corto por modelo</div>
+                      <button
+                        type="button"
+                        onClick={() => navigator.clipboard?.writeText(buildProbeReport(modelProbeResults))}
+                        className="rounded-lg border border-kawaii-surface-3 px-2 py-1 text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                      >
+                        Copiar reporte
+                      </button>
+                    </div>
                     {modelProbeResults.map(r => (
                       <div key={`${r.id}:${r.model}`} className="flex items-start justify-between gap-2">
                         <div>
@@ -789,12 +876,13 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                             {r.ok ? '●' : '○'} {r.label} · {r.model}
                           </div>
                           <div className="text-kawaii-dim">{r.detail}</div>
+                          <div className="text-[11px] text-kawaii-dim">fase: {r.phase} · tipo: {r.issueType}</div>
                         </div>
                         <div className="text-kawaii-dim whitespace-nowrap">{r.latencyMs} ms</div>
                       </div>
                     ))}
                     <div className="pt-1 text-kawaii-dim border-t border-kawaii-surface-3">
-                      Sugerencia: prioriza rutas &lt; 5000ms y desactiva las que fallen por auth/modelo.
+                      Sugerencia: prioriza rutas &lt; 5000ms y descarta auth/quota/model. Si stream-first-token pasa, el proveedor está vivo aunque chat-fallback falle.
                     </div>
                   </div>
                 )}
