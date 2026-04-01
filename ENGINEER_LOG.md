@@ -358,3 +358,23 @@
 **Next steps**:
 - Add a compact explanation badge in chat when a learned fallback was selected automatically
 - Add import/export support for learned diagnostics knowledge if local portability becomes necessary
+
+## [CP-17.2] 2026-03-31
+**Status**: Passed
+**Decisions made**:
+- Completed modular split of App UI vs orchestration logic via `useAppLogic` to reduce blast radius of future changes
+- Fixed runtime crash in chat hook caused by evaluating diagnostics flags before store initialization (`settings` TDZ)
+- Restored Smart routing compatibility for creative prompts with optional legacy engine, guarded by recent-failure avoidance
+- Improved diagnostics learning merge logic to reuse known fixes across providers when fingerprint/action match
+
+**Trade-offs**:
+- Kept diagnostics improvements heuristic-first to avoid introducing external dependencies and preserve deterministic behavior
+- Retained existing architecture and public APIs to avoid regressions in validated flows
+
+**Debt deferred**:
+- Add source-mapped error telemetry for renderer runtime exceptions to shorten future root-cause time
+- Add E2E scenarios for legacy smart-route selection under simulated provider outages
+
+**Next steps**:
+- Add a focused E2E that validates at least one full send/response chat roundtrip in mock mode
+- Add lint gate for `no-use-before-define` in hooks to prevent TDZ regressions

@@ -79,4 +79,28 @@ describe('errorDiagnostics', () => {
     expect((learnedTwice[0].recognitionNotes ?? []).length > 0).toBe(true)
     expect(learnedTwice[0].sampleMessages).toHaveLength(2)
   })
+
+  it('reuses knowledge entry across providers when fingerprint and action match', () => {
+    const first = createErrorLogEntry({
+      source: 'chat',
+      message: 'Failed to fetch from endpoint',
+      route: 'cloud->local',
+      provider: 'openai-compatible',
+      autoRepairApplied: true,
+    })
+
+    const second = createErrorLogEntry({
+      source: 'chat',
+      message: 'Failed to fetch from endpoint',
+      route: 'cloud->local',
+      provider: 'openrouter',
+      autoRepairApplied: true,
+    })
+
+    const learnedOnce = updateErrorKnowledgeBase([], first)
+    const learnedTwice = updateErrorKnowledgeBase(learnedOnce, second)
+
+    expect(learnedTwice).toHaveLength(1)
+    expect(learnedTwice[0].seenCount).toBe(2)
+  })
 })

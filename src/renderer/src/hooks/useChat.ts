@@ -393,17 +393,17 @@ async function buildCloudQueue(
 // ── Hook ──────────────────────────────────────────────────────────────────────
 
 export function useChat(models: AIModel[] = []) {
-    // Timeout de seguridad para cualquier operación de chat/stream
-    const CHAT_TIMEOUT_MS = 60_000
-    const { startDiagnostic, log: diagLog, endDiagnostic } = useDiagnosticChat()
-    // Solo activar diagnóstico si settings.debugMode o settings.diagnosticMode
-    const enableDiag = (settings as any).debugMode || (settings as any).diagnosticMode
+  // Timeout de seguridad para cualquier operación de chat/stream
+  const CHAT_TIMEOUT_MS = 60_000
+  const { startDiagnostic, log: diagLog, endDiagnostic } = useDiagnosticChat()
+  const { activeId, addMessage, updateMessage, create, rename, upsertUserMemory } = useChatStore()
+  const { settings, update: updateSettings } = useSettingsStore()
+  // Solo activar diagnóstico si settings.debugMode o settings.diagnosticMode
+  const enableDiag = (settings as any).debugMode || (settings as any).diagnosticMode
+
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-
-  const { activeId, addMessage, updateMessage, create, rename, upsertUserMemory } = useChatStore()
-  const { settings, update: updateSettings } = useSettingsStore()
 
   const logError = useCallback((message: string, options?: { provider?: string; route?: string; autoRepairApplied?: boolean }) => {
     const currentSettings = useSettingsStore.getState().settings

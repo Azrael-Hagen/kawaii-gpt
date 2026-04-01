@@ -274,13 +274,21 @@ export function updateErrorKnowledgeBase(
 ): ErrorKnowledgeCase[] {
   const fingerprint = fingerprintError(entry.message)
   const recommendedAction = inferRepairAction(entry.analysis.category, entry.route, entry.analysis.autoRepairApplied)
-  const existing = knowledgeBase.find(item =>
+  const exact = knowledgeBase.find(item =>
     item.fingerprint === fingerprint &&
     item.category === entry.analysis.category &&
     item.provider === entry.provider &&
     item.route === entry.route &&
     item.recommendedAction === recommendedAction,
   )
+
+  const fallback = knowledgeBase.find(item =>
+    item.fingerprint === fingerprint &&
+    item.category === entry.analysis.category &&
+    item.recommendedAction === recommendedAction,
+  )
+
+  const existing = exact ?? fallback
 
   if (existing) {
     return knowledgeBase
@@ -290,6 +298,8 @@ export function updateErrorKnowledgeBase(
             seenCount: item.seenCount + 1,
             successCount: item.successCount + (entry.analysis.autoRepairApplied ? 1 : 0),
             lastSeenAt: entry.at,
+            provider: item.provider ?? entry.provider,
+            route: item.route ?? entry.route,
             recognitionNotes: limitUnique([
               ...(item.recognitionNotes ?? []),
               ...(entry.analysis.recognitionNotes ?? []),
