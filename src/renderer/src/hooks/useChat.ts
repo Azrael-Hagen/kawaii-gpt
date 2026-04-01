@@ -466,22 +466,7 @@ export function useChat(models: AIModel[] = []) {
     })
 
     setIsLoading(true)
-        let timeoutHandle: NodeJS.Timeout | null = null
-        let timedOut = false
-        // Timeout global para evitar cuelgues
-        await new Promise<void>((resolve) => {
-          timeoutHandle = setTimeout(() => {
-            timedOut = true
-            setIsLoading(false)
-            setError('⏰ Timeout: la operación de chat superó el límite de 60s.')
-            if (enableDiag) {
-              diagLog('Timeout global: operación de chat superó 60s, forzando cierre.')
-              endDiagnostic()
-            }
-            resolve()
-          }, CHAT_TIMEOUT_MS)
-        })
-      if (enableDiag) diagLog('Preparando proveedores y rutas...')
+    if (enableDiag) diagLog('Preparando proveedores y rutas...')
     abortRef.current = new AbortController()
 
     const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
@@ -524,9 +509,7 @@ export function useChat(models: AIModel[] = []) {
     const target = decision.target
 
     // ── Image generation branch ───────────────────────────────────────────────
-      if (timedOut) return
-      if (enableDiag) diagLog('Generando imagen...')
-      if (enableDiag) diagLog(`Error generando imagen: ${String(err)}`)
+    if (enableDiag) diagLog('Generando imagen...')
     if (decision.generateImage && settings.imageGenEnabled) {
       updateMessage(convId, assistantId, 'Generando imagen... ✨', true)
       try {
@@ -667,7 +650,6 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Web search context ────────────────────────────────────────────────────
-      if (timedOut) return
     const currentConversation = useChatStore.getState().conversations.find(c => c.id === convId)
     let effectiveMessages: ChatMessageInput[] = prependUserMemoryContext(
       apiMessages,
@@ -687,7 +669,6 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Legacy engine mode ────────────────────────────────────────────────────
-      if (timedOut) return
     if (settings.provider === 'legacy-engine' || target === 'legacy') {
       const legacyModel = stripPrefix(settings.legacyModel || model || 'legacy-default')
       try {
@@ -773,7 +754,6 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Local mode (Ollama) with Smart failover ───────────────────────────────
-      if (timedOut) return
     if (target === 'local') {
       const localModel = stripPrefix(settings.localModel || model)
       const localClient = new OllamaClient(settings.localBaseUrl)
@@ -879,13 +859,6 @@ export function useChat(models: AIModel[] = []) {
     }
 
     // ── Cloud mode with automatic provider rotation ───────────────────────────
-      if (timedOut) return
-      if (timedOut) return
-      if (timeoutHandle) clearTimeout(timeoutHandle)
-      if (enableDiag) {
-        diagLog('Chat finalizado correctamente.')
-        endDiagnostic()
-      }
     if (cloudQueue.length === 0) {
       const notice = '⚠️ Sin proveedor cloud disponible. Revisa API keys, endpoint y modelo en Ajustes ⚙️.'
       logError(notice, { route: 'cloud-queue' })
