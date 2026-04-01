@@ -31,4 +31,16 @@ test.describe('KawaiiGPT UI', () => {
     // Button may be disabled if no model exists yet, but the panel must render.
     await expect(page.getByText('Sin conversaciones aún.')).toBeVisible()
   })
+
+  test('can send a message and render it in the timeline', async ({ page }) => {
+    await page.goto('/')
+    await completeOrSkipSetup(page)
+
+    const prompt = 'hola desde e2e'
+    const input = page.getByPlaceholder('Escríbeme algo...')
+    await input.fill(prompt)
+    await input.press('Enter')
+
+    await expect(page.getByRole('main').getByText(prompt)).toBeVisible()
+  })
 })

@@ -468,45 +468,58 @@ export function useChat(models: AIModel[] = []) {
     setIsLoading(true)
     if (enableDiag) diagLog('Preparando proveedores y rutas...')
     abortRef.current = new AbortController()
-
-    const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
-    let apiKey = ''
-    let decision: ReturnType<typeof selectRoute>
-    let sysPrompt = ''
-    let cloudQueue: CloudCfg[] = []
-    let avoidLocalFallback = false
-    let avoidLegacyFallback = false
+    let timeoutTriggered = false
+    const timeoutHandle = window.setTimeout(() => {
+      timeoutTriggered = true
+      abortRef.current?.abort(new DOMException('Chat timeout', 'AbortError'))
+      const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
+      setError(timeoutMessage)
+      updateMessage(convId!, assistantId, `⚠️ ${timeoutMessage}`, false)
+      setIsLoading(false)
+      if (enableDiag) {
+        diagLog('Timeout global alcanzado: se abortó la operación activa de chat.')
+      }
+    }, CHAT_TIMEOUT_MS)
 
     try {
-      apiKey = await getProviderApiKey()
-      const currentSettings = useSettingsStore.getState().settings
-      avoidLocalFallback = hasRecentLocalRuntimeConflict(currentSettings)
-      avoidLegacyFallback = hasRecentLegacyConflict(currentSettings)
+      const routePrompt = text || attachments.map(attachment => attachment.name).join(' ')
+      let apiKey = ''
+      let decision: ReturnType<typeof selectRoute>
+      let sysPrompt = ''
+      let cloudQueue: CloudCfg[] = []
+      let avoidLocalFallback = false
+      let avoidLegacyFallback = false
 
-      if (avoidLegacyFallback && currentSettings.enableLegacyEngine) {
-        updateSettings({ enableLegacyEngine: false })
-      }
+      try {
+        apiKey = await getProviderApiKey()
+        const currentSettings = useSettingsStore.getState().settings
+        avoidLocalFallback = hasRecentLocalRuntimeConflict(currentSettings)
+        avoidLegacyFallback = hasRecentLegacyConflict(currentSettings)
 
-      const routingSettings: Settings = {
-        ...currentSettings,
-        enableLegacyEngine: currentSettings.enableLegacyEngine && !avoidLegacyFallback,
-      }
+        if (avoidLegacyFallback && currentSettings.enableLegacyEngine) {
+          updateSettings({ enableLegacyEngine: false })
+        }
 
-      decision = selectRoute(routingSettings, routePrompt)
-      sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
-      const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
-      cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
-    } catch (err) {
+        const routingSettings: Settings = {
+          ...currentSettings,
+          enableLegacyEngine: currentSettings.enableLegacyEngine && !avoidLegacyFallback,
+        }
+
+        decision = selectRoute(routingSettings, routePrompt)
+        sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
+        const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
+        cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
+      } catch (err) {
         if (enableDiag) diagLog(`Error en preparación: ${String(err)}`)
-      const msg = summarizeProviderError(err)
-      logError(msg, { route: settings.provider })
-      setError(msg)
-      updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
-      setIsLoading(false)
-      return
-    }
+        const msg = summarizeProviderError(err)
+        logError(msg, { route: settings.provider })
+        setError(msg)
+        updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
+        setIsLoading(false)
+        return
+      }
 
-    const target = decision.target
+      const target = decision.target
 
     // ── Image generation branch ───────────────────────────────────────────────
     if (enableDiag) diagLog('Generando imagen...')
@@ -673,7 +686,7 @@ export function useChat(models: AIModel[] = []) {
       const legacyModel = stripPrefix(settings.legacyModel || model || 'legacy-default')
       try {
         const legacyClient = await ensureLegacyClient(settings, apiKey)
-        if (settings.streamResponses) {
+          if (settings.streamResponses) {
           let acc = ''
           const streamUi = createStreamUpdateController((partial) => {
             updateMessage(convId!, assistantId, partial, true)
@@ -695,6 +708,7 @@ export function useChat(models: AIModel[] = []) {
         }
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
+          if (timeoutTriggered) return
           const partial = useChatStore.getState()
             .conversations.find(c => c.id === convId)
             ?.messages.find(m => m.id === assistantId)?.content ?? ''
@@ -783,6 +797,7 @@ export function useChat(models: AIModel[] = []) {
         return
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
+          if (timeoutTriggered) return
           const partial = useChatStore.getState()
             .conversations.find(c => c.id === convId)
             ?.messages.find(m => m.id === assistantId)?.content ?? ''
@@ -915,6 +930,7 @@ export function useChat(models: AIModel[] = []) {
       } catch (err) {
         // Abort → preserve partial content
         if ((err as Error).name === 'AbortError') {
+          if (timeoutTriggered) return
           const partial = useChatStore.getState()
             .conversations.find(c => c.id === convId)
             ?.messages.find(m => m.id === assistantId)?.content ?? ''
@@ -1049,7 +1065,14 @@ export function useChat(models: AIModel[] = []) {
       }
     }
 
-    setIsLoading(false)
+      setIsLoading(false)
+    } finally {
+      window.clearTimeout(timeoutHandle)
+      if (enableDiag) {
+        diagLog('Chat finalizado.')
+        endDiagnostic()
+      }
+    }
   }, [isLoading, activeId, settings, models, addMessage, updateMessage, create, rename, upsertUserMemory, updateSettings, logError])
 
   const stopStreaming = useCallback((): void => {
