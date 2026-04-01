@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload, Trash2 } from 'lucide-react'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
-import { OpenAICompatibleClient } from '@/services/aiClient'
+import { OllamaClient, OpenAICompatibleClient } from '@/services/aiClient'
 import { listSpeechVoices } from '@/services/voice'
 import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
 import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus } from '@/types'
 import { formatTime } from '@/utils/formatters'
+import { getCatalogModelsForBaseUrl } from '@/services/cloudCatalog'
 
 interface CloudPreset {
   id: 'openrouter' | 'openai' | 'groq' | 'gemini' | 'together'
@@ -56,6 +57,15 @@ interface Props {
   onRefreshModels: () => void
 }
 
+interface ModelProbeResult {
+  id: string
+  label: string
+  model: string
+  ok: boolean
+  latencyMs: number
+  detail: string
+}
+
 export default function SettingsModal({ open, onClose, models, status, onRefreshModels }: Props) {
   const { settings, update, reset } = useSettingsStore()
   const { activeId, conversations, clearUserMemory, removeUserMemoryFact } = useChatStore()
@@ -63,6 +73,8 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const [additionalKeys, setAdditionalKeys] = useState<Record<string, string>>({})
   const [checkingCloud, setCheckingCloud] = useState(false)
   const [connectivityResults, setConnectivityResults] = useState<CloudConnectivityStatus[]>([])
+  const [benchmarkingModels, setBenchmarkingModels] = useState(false)
+  const [modelProbeResults, setModelProbeResults] = useState<ModelProbeResult[]>([])
   const [legacyRuntimeStatus, setLegacyRuntimeStatus] = useState<{ running: boolean; pid?: number; command?: string; lastError?: string } | null>(null)
   const [legacyRuntimeBusy, setLegacyRuntimeBusy] = useState(false)
   const [availableVoices, setAvailableVoices] = useState<Array<{ name: string; lang: string; default: boolean }>>([])
@@ -117,8 +129,8 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
       provider: 'smart',
       cloudBaseUrl: 'https://openrouter.ai/api/v1',
       providerBaseUrl: 'https://openrouter.ai/api/v1',
-      cloudModel: 'google/gemini-2.0-flash-exp:free',
-      defaultModel: 'google/gemini-2.0-flash-exp:free',
+      cloudModel: 'openai/gpt-5.4-mini',
+      defaultModel: 'openai/gpt-5.4-mini',
       prioritizeUnrestricted: true,
       preferFreeTier: true,
       autoFailover: true,
@@ -269,6 +281,136 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
     setConnectivityResults(results)
     update({ cloudConnectivity: results })
     setCheckingCloud(false)
+  }
+
+  const withProbeTimeout = async <T,>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+    return await new Promise<T>((resolve, reject) => {
+      const timer = window.setTimeout(() => {
+        reject(new Error(`timeout ${Math.round(timeoutMs / 1000)}s`))
+      }, timeoutMs)
+
+      promise
+        .then(value => {
+          window.clearTimeout(timer)
+          resolve(value)
+        })
+        .catch(err => {
+          window.clearTimeout(timer)
+          reject(err)
+        })
+    })
+  }
+
+  const runModelBenchmarks = async () => {
+    setBenchmarkingModels(true)
+    setModelProbeResults([])
+
+    const prompt = 'Responde solo: OK'
+    const timeoutMs = 20_000
+
+    const cloudTargets: Array<{ id: string; label: string; baseUrl: string; key: string; model: string }> = [
+      {
+        id: 'main',
+        label: 'Cloud principal',
+        baseUrl: settings.cloudBaseUrl,
+        key: apiKey.trim(),
+        model: settings.cloudModel || getCatalogModelsForBaseUrl(settings.cloudBaseUrl)[0] || 'openai/gpt-5.4-mini',
+      },
+      ...(settings.additionalProviders ?? [])
+        .filter(ap => ap.enabled && ap.baseUrl)
+        .map(ap => ({
+          id: ap.id,
+          label: ap.name || ap.id,
+          baseUrl: ap.baseUrl,
+          key: (additionalKeys[ap.id] ?? '').trim(),
+          model: getCatalogModelsForBaseUrl(ap.baseUrl)[0] || settings.cloudModel || 'gpt-5.4-mini',
+        })),
+    ]
+
+    const localModel = settings.localModel
+      || models.find(m => m.provider === 'ollama')?.name
+      || ''
+
+    const localTargets: Array<{ id: string; label: string; baseUrl: string; model: string }> = localModel
+      ? [{ id: 'local', label: 'Local Ollama', baseUrl: settings.localBaseUrl, model: localModel }]
+      : []
+
+    const results: ModelProbeResult[] = []
+
+    for (const target of cloudTargets) {
+      const startedAt = Date.now()
+      if (!target.key) {
+        results.push({
+          id: target.id,
+          label: target.label,
+          model: target.model,
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          detail: 'Sin API key',
+        })
+        continue
+      }
+
+      try {
+        const client = new OpenAICompatibleClient(target.baseUrl, target.key)
+        const reply = await withProbeTimeout(
+          client.chat(target.model, [{ role: 'user', content: prompt }], undefined, 0.1, 40),
+          timeoutMs,
+        )
+        const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
+        results.push({
+          id: target.id,
+          label: target.label,
+          model: target.model,
+          ok: normalized.includes('OK'),
+          latencyMs: Date.now() - startedAt,
+          detail: normalized.includes('OK') ? 'Respuesta válida' : `Respuesta inesperada: ${reply.slice(0, 80)}`,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        results.push({
+          id: target.id,
+          label: target.label,
+          model: target.model,
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          detail: msg.replace(/\s+/g, ' ').slice(0, 140),
+        })
+      }
+    }
+
+    for (const target of localTargets) {
+      const startedAt = Date.now()
+      try {
+        const client = new OllamaClient(target.baseUrl)
+        const reply = await withProbeTimeout(
+          client.chat(target.model, [{ role: 'user', content: prompt }], undefined, 0.1, 40),
+          timeoutMs,
+        )
+        const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
+        results.push({
+          id: target.id,
+          label: target.label,
+          model: target.model,
+          ok: normalized.includes('OK'),
+          latencyMs: Date.now() - startedAt,
+          detail: normalized.includes('OK') ? 'Respuesta válida' : `Respuesta inesperada: ${reply.slice(0, 80)}`,
+        })
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err)
+        results.push({
+          id: target.id,
+          label: target.label,
+          model: target.model,
+          ok: false,
+          latencyMs: Date.now() - startedAt,
+          detail: msg.replace(/\s+/g, ' ').slice(0, 140),
+        })
+      }
+    }
+
+    setModelProbeResults(results)
+    setBenchmarkingModels(false)
   }
 
   const refreshLegacyRuntimeStatus = async () => {
@@ -592,6 +734,17 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                       : 'Probar conectividad cloud (main + adicionales)'}
                 </button>
 
+                <button
+                  type="button"
+                  onClick={runModelBenchmarks}
+                  disabled={benchmarkingModels}
+                  className="mt-2 w-full py-2 rounded-lg bg-kawaii-surface-2 border border-kawaii-surface-3 text-kawaii-text text-xs hover:bg-kawaii-surface-3 disabled:opacity-60"
+                >
+                  {benchmarkingModels
+                    ? 'Midiendo latencia por modelo...'
+                    : 'Probar mensaje rápido por modelo (cloud + local)'}
+                </button>
+
                 {connectivityResults.length > 0 && (
                   <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs space-y-1.5">
                     {connectivityResults.map(r => (
@@ -607,6 +760,26 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                     ))}
                     <div className="pt-1 text-kawaii-dim border-t border-kawaii-surface-3">
                       Ultima prueba: {formatTime(connectivityResults[0].checkedAt)}
+                    </div>
+                  </div>
+                )}
+
+                {modelProbeResults.length > 0 && (
+                  <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs space-y-1.5">
+                    <div className="font-semibold text-kawaii-text">Benchmark de mensaje corto por modelo</div>
+                    {modelProbeResults.map(r => (
+                      <div key={`${r.id}:${r.model}`} className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className={`font-semibold ${r.ok ? 'text-kawaii-success' : 'text-kawaii-error'}`}>
+                            {r.ok ? '●' : '○'} {r.label} · {r.model}
+                          </div>
+                          <div className="text-kawaii-dim">{r.detail}</div>
+                        </div>
+                        <div className="text-kawaii-dim whitespace-nowrap">{r.latencyMs} ms</div>
+                      </div>
+                    ))}
+                    <div className="pt-1 text-kawaii-dim border-t border-kawaii-surface-3">
+                      Sugerencia: prioriza rutas &lt; 5000ms y desactiva las que fallen por auth/modelo.
                     </div>
                   </div>
                 )}

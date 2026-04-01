@@ -409,6 +409,9 @@ function rankCloudProviders(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
     score -= fails.auth * 120
     score -= fails.timeout * 45
     score -= fails.network * 25
+    if (cfg.model.toLowerCase().includes('openai/gpt-5.4-mini') || cfg.model.toLowerCase() === 'gpt-5.4-mini') {
+      score += 35
+    }
 
     return { cfg, score }
   })
@@ -447,6 +450,14 @@ function resolveProvider(
     }
   }
   return { baseUrl: fallbackUrl, keyId: fallbackKeyId, actualModel: stripPrefix(modelName) }
+}
+
+function resolveLocalModelName(settings: Settings, models: AIModel[]): string {
+  const explicit = stripPrefix(settings.localModel || '').trim()
+  if (explicit) return explicit
+
+  const discoveredLocal = models.find(m => m.provider === 'ollama')?.name ?? ''
+  return stripPrefix(discoveredLocal)
 }
 
 /** Build ordered cloud provider queue: main first, then enabled additional providers */
@@ -842,8 +853,9 @@ export function useChat(models: AIModel[] = []) {
         const msg = err instanceof Error ? err.message : String(err)
         logError(msg, { provider: settings.legacyEngineBaseUrl, route: 'legacy' })
 
-        if (settings.provider === 'smart' && settings.autoFailover && settings.localModel && !avoidLocalFallback) {
-          const localModel = stripPrefix(settings.localModel)
+        const fallbackLocalModel = resolveLocalModelName(settings, models)
+        if (settings.provider === 'smart' && settings.autoFailover && fallbackLocalModel && !avoidLocalFallback) {
+          const localModel = fallbackLocalModel
           const localClient = new OllamaClient(settings.localBaseUrl)
           updateMessage(convId!, assistantId, `⚠️ Kawaii no disponible (${msg}) → usando modelo local...`, true)
           try {
@@ -891,7 +903,7 @@ export function useChat(models: AIModel[] = []) {
 
     // ── Local mode (Ollama) with Smart failover ───────────────────────────────
     if (target === 'local') {
-      const localModel = stripPrefix(settings.localModel || model)
+      const localModel = resolveLocalModelName(settings, models) || stripPrefix(settings.localModel || model)
       const localClient = new OllamaClient(settings.localBaseUrl)
       let localFailed = false
       try {
@@ -1099,8 +1111,9 @@ export function useChat(models: AIModel[] = []) {
           }
 
           const detailedTimeout = withRepairSuggestion(useSettingsStore.getState().settings, errMsg, cfg.label, 'cloud')
-          if (settings.autoFailover && settings.localModel && !avoidLocalFallback) {
-            const localModel = stripPrefix(settings.localModel)
+          const fallbackLocalModel = resolveLocalModelName(settings, models)
+          if (settings.autoFailover && fallbackLocalModel && !avoidLocalFallback) {
+            const localModel = fallbackLocalModel
             const localClient = new OllamaClient(settings.localBaseUrl)
             updateMessage(convId!, assistantId, `⚠️ Nube agotada por timeout (${errMsg}) → usando modelo local...`, true)
             try {
@@ -1175,8 +1188,9 @@ export function useChat(models: AIModel[] = []) {
         const shouldPreferLegacy = learnedRepair.suggestion === 'switch_to_legacy' && (learnedRepair.confidence ?? 0) >= 0.6
         const shouldPreferLocal = learnedRepair.suggestion === 'switch_to_local' && (learnedRepair.confidence ?? 0) >= 0.6
 
-        if (shouldPreferLocal && settings.autoFailover && settings.localModel && !avoidLocalFallback) {
-          const localModel = stripPrefix(settings.localModel)
+        const learnedLocalModel = resolveLocalModelName(settings, models)
+        if (shouldPreferLocal && settings.autoFailover && learnedLocalModel && !avoidLocalFallback) {
+          const localModel = learnedLocalModel
           const localClient = new OllamaClient(settings.localBaseUrl)
           updateMessage(convId!, assistantId, `⚡ Aprendizaje local sugiere fallback directo a modelo local (${Math.round((learnedRepair.confidence ?? 0) * 100)}%)...`, true)
           try {
@@ -1211,8 +1225,9 @@ export function useChat(models: AIModel[] = []) {
 
         // In Smart mode, never fall back to legacy engine if cloud fails
 
-        if (settings.autoFailover && settings.localModel && !avoidLocalFallback) {
-          const localModel = stripPrefix(settings.localModel)
+        const fallbackLocalModel = resolveLocalModelName(settings, models)
+        if (settings.autoFailover && fallbackLocalModel && !avoidLocalFallback) {
+          const localModel = fallbackLocalModel
           const localClient = new OllamaClient(settings.localBaseUrl)
           updateMessage(convId!, assistantId, `⚠️ Nube sin disponibilidad (${errMsg}) → usando modelo local...`, true)
           try {
