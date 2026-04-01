@@ -10,7 +10,7 @@ import {
   providerSupportsImageGeneration,
 } from '@/services/cloudCatalog'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
-import { appendErrorLog, createErrorLogEntry, getLearnedRepairRecommendation, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
+import { analyzeErrorMessage, appendErrorLog, createErrorLogEntry, getLearnedRepairRecommendation, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
@@ -33,6 +33,8 @@ const SOFT_REFUSAL_ERR = 'SOFT_REFUSAL'
 const STREAM_PARTIAL_UPDATE_MS = 48
 const LOCAL_CONFLICT_WINDOW_MS = 10 * 60_000
 const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
+const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
+const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
 
 // ── Pure helpers ──────────────────────────────────────────────────────────────
 
@@ -315,6 +317,91 @@ async function filterHealthyCloudProviders(queue: CloudCfg[]): Promise<CloudCfg[
   return queue
 }
 
+function extractBaseUrlFromConnectivityLabel(label: string): string {
+  const match = label.match(/\((https?:\/\/[^)]+)\)/i)
+  return (match?.[1] ?? '').trim()
+}
+
+function isProviderMatch(providerText: string, cfg: CloudCfg): boolean {
+  const lower = providerText.toLowerCase()
+  const shortLabel = cfg.label.split(' • ')[0].toLowerCase()
+  return lower.includes(cfg.baseUrl.toLowerCase()) || lower.includes(shortLabel)
+}
+
+function countRecentProviderFailures(settings: Settings, cfg: CloudCfg): { auth: number; timeout: number; network: number } {
+  const logs = settings.errorLogs ?? []
+  const now = Date.now()
+  const counters = { auth: 0, timeout: 0, network: 0 }
+
+  for (const entry of logs) {
+    if (!entry.at || now - entry.at > CLOUD_FAILURE_WINDOW_MS) continue
+    if (!entry.route?.toLowerCase().includes('cloud')) continue
+    if (!entry.provider || !isProviderMatch(entry.provider, cfg)) continue
+
+    const msg = (entry.message ?? '').toLowerCase()
+    if (msg.includes('401') || msg.includes('403') || msg.includes('invalid api key') || msg.includes('unauthorized')) {
+      counters.auth += 1
+    }
+    if (msg.includes('timeout') || msg.includes('timed out')) {
+      counters.timeout += 1
+    }
+    if (msg.includes('failed to fetch') || msg.includes('network') || msg.includes('econnrefused')) {
+      counters.network += 1
+    }
+  }
+
+  return counters
+}
+
+function rankCloudProviders(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
+  if (queue.length <= 1) return queue
+
+  const now = Date.now()
+  const connectivity = settings.cloudConnectivity ?? []
+
+  const scored = queue.map(cfg => {
+    let score = 0
+
+    const conn = connectivity.find(item => {
+      const baseUrl = extractBaseUrlFromConnectivityLabel(item.label)
+      return baseUrl && baseUrl.toLowerCase() === cfg.baseUrl.toLowerCase()
+    })
+
+    if (conn && now - conn.checkedAt <= CLOUD_HEALTH_WINDOW_MS) {
+      score += conn.ok ? 30 : -70
+      if (!conn.ok && /api key|credenciales|sin api key/i.test(conn.detail)) {
+        score -= 50
+      }
+      score -= Math.min(20, Math.floor(conn.latencyMs / 200))
+    }
+
+    const fails = countRecentProviderFailures(settings, cfg)
+    score -= fails.auth * 120
+    score -= fails.timeout * 45
+    score -= fails.network * 25
+
+    return { cfg, score }
+  })
+
+  const filtered = scored.filter(item => item.score > -100)
+  const ordered = (filtered.length > 0 ? filtered : scored)
+    .sort((a, b) => b.score - a.score)
+    .map(item => item.cfg)
+
+  return ordered
+}
+
+function withRepairSuggestion(settings: Settings, message: string, provider: string, route: string): string {
+  const analysis = analyzeErrorMessage(message, {
+    provider,
+    route,
+    knowledgeBase: settings.errorKnowledgeBase,
+  })
+  const suggestion = analysis.suggestedFix?.trim()
+  if (!suggestion) return message
+  return `${message} Sugerencia: ${suggestion}`
+}
+
 function resolveProvider(
   modelName: string,
   models: AIModel[],
@@ -473,8 +560,10 @@ export function useChat(models: AIModel[] = []) {
       timeoutTriggered = true
       abortRef.current?.abort(new DOMException('Chat timeout', 'AbortError'))
       const timeoutMessage = '⏰ Timeout: la operación de chat superó el límite de 60s.'
-      setError(timeoutMessage)
-      updateMessage(convId!, assistantId, `⚠️ ${timeoutMessage}`, false)
+      const detailed = withRepairSuggestion(useSettingsStore.getState().settings, timeoutMessage, 'chat-runtime', 'cloud')
+      setError(detailed)
+      updateMessage(convId!, assistantId, `⚠️ ${detailed}`, false)
+      logError(detailed, { provider: 'chat-runtime', route: 'cloud' })
       setIsLoading(false)
       if (enableDiag) {
         diagLog('Timeout global alcanzado: se abortó la operación activa de chat.')
@@ -508,7 +597,8 @@ export function useChat(models: AIModel[] = []) {
         decision = selectRoute(routingSettings, routePrompt)
         sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
         const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
-        cloudQueue = await filterHealthyCloudProviders(builtCloudQueue)
+        const healthyQueue = await filterHealthyCloudProviders(builtCloudQueue)
+        cloudQueue = rankCloudProviders(currentSettings, healthyQueue)
       } catch (err) {
         if (enableDiag) diagLog(`Error en preparación: ${String(err)}`)
         const msg = summarizeProviderError(err)
@@ -876,18 +966,19 @@ export function useChat(models: AIModel[] = []) {
     // ── Cloud mode with automatic provider rotation ───────────────────────────
     if (cloudQueue.length === 0) {
       const notice = '⚠️ Sin proveedor cloud disponible. Revisa API keys, endpoint y modelo en Ajustes ⚙️.'
-      logError(notice, { route: 'cloud-queue' })
+      const detailed = withRepairSuggestion(useSettingsStore.getState().settings, notice, 'cloud-queue', 'cloud')
+      logError(detailed, { route: 'cloud-queue' })
       updateSettings({
         cloudDiagnostics: {
           lastProvider: 'cloud-queue',
-          lastError: notice,
+          lastError: detailed,
           lastAt: Date.now(),
           attempt: 0,
           total: 0,
         },
       })
-      setError(notice)
-      updateMessage(convId, assistantId, notice, false)
+      setError(detailed)
+      updateMessage(convId, assistantId, detailed, false)
       setIsLoading(false)
       return
     }
@@ -1051,15 +1142,17 @@ export function useChat(models: AIModel[] = []) {
             avoidLocalFallback ? 'runtime local con errores de memoria recientes' : '',
           ].filter(Boolean).join(' · ')
           const finalMessage = details ? `${msg}. ${details}` : msg
-          logError(finalMessage, { provider: cfg.label, route: 'cloud' })
-          setError(finalMessage)
-          updateMessage(convId, assistantId, `⚠️ ${finalMessage}`, false)
+          const detailed = withRepairSuggestion(useSettingsStore.getState().settings, finalMessage, cfg.label, 'cloud')
+          logError(detailed, { provider: cfg.label, route: 'cloud' })
+          setError(detailed)
+          updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
           setIsLoading(false)
           return
         }
-        logError(msg, { provider: cfg.label, route: 'cloud' })
-        setError(msg)
-        updateMessage(convId, assistantId, `⚠️ ${msg}`, false)
+        const detailed = withRepairSuggestion(useSettingsStore.getState().settings, msg, cfg.label, 'cloud')
+        logError(detailed, { provider: cfg.label, route: 'cloud' })
+        setError(detailed)
+        updateMessage(convId, assistantId, `⚠️ ${detailed}`, false)
         setIsLoading(false)
         return
       }
