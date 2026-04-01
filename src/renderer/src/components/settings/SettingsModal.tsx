@@ -306,7 +306,8 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
     setModelProbeResults([])
 
     const prompt = 'Responde solo: OK'
-    const timeoutMs = 20_000
+    const cloudTimeoutMs = 15_000
+    const localTimeoutMs = 45_000
 
     const cloudTargets: Array<{ id: string; label: string; baseUrl: string; key: string; model: string }> = [
       {
@@ -355,7 +356,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
         const client = new OpenAICompatibleClient(target.baseUrl, target.key)
         const reply = await withProbeTimeout(
           client.chat(target.model, [{ role: 'user', content: prompt }], undefined, 0.1, 40),
-          timeoutMs,
+          cloudTimeoutMs,
         )
         const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
         results.push({
@@ -385,7 +386,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
         const client = new OllamaClient(target.baseUrl)
         const reply = await withProbeTimeout(
           client.chat(target.model, [{ role: 'user', content: prompt }], undefined, 0.1, 40),
-          timeoutMs,
+          localTimeoutMs,
         )
         const normalized = reply.replace(/\s+/g, ' ').trim().toUpperCase()
         results.push({
@@ -407,6 +408,20 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
           detail: msg.replace(/\s+/g, ' ').slice(0, 140),
         })
       }
+    }
+
+    const main = results.find(r => r.id === 'main')
+    if (
+      main &&
+      !main.ok &&
+      /openrouter\.ai/i.test(settings.cloudBaseUrl) &&
+      /no endpoints found|no encuentra el modelo|model not found/i.test(main.detail)
+    ) {
+      update({
+        cloudModel: 'openai/gpt-5.4-mini',
+        defaultModel: 'openai/gpt-5.4-mini',
+      })
+      main.detail = `${main.detail} -> auto-ajuste aplicado: cloudModel=openai/gpt-5.4-mini`
     }
 
     setModelProbeResults(results)

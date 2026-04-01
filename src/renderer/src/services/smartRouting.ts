@@ -218,6 +218,8 @@ export function prependWebContext(
 function adaptMaxTokens(base: number, text: string): number {
   if (text.includes('resumen corto') || text.includes('short summary')) return Math.min(base, 220)
   if (text.includes('paso a paso') || text.includes('step by step')) return Math.max(base, 800)
+  if (text.length <= 120) return Math.min(base, 420)
+  if (text.length <= 280) return Math.min(base, 700)
   return base
 }
 

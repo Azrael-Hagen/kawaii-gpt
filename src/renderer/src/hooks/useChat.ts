@@ -402,6 +402,9 @@ function rankCloudProviders(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
       if (!conn.ok && /api key|credenciales|sin api key/i.test(conn.detail)) {
         score -= 50
       }
+      if (!conn.ok && /no endpoints found|no encuentra el modelo|model not found|invalid api key|unauthorized|credit limit exceeded|402/i.test(conn.detail)) {
+        score -= 220
+      }
       score -= Math.min(20, Math.floor(conn.latencyMs / 200))
     }
 
