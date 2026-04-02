@@ -23,6 +23,8 @@ const CODE_HINTS = ['código', 'code', 'bug', 'test', 'typescript', 'python', 'a
 const CLOUD_RECOVERY_BACKOFF_MS = 90_000
 const LOCAL_AVOIDANCE_WINDOW_MS = 10 * 60_000
 const LEGACY_AVOIDANCE_WINDOW_MS = 10 * 60_000
+const CLOUD_HEALTH_FRESH_WINDOW_MS = 20 * 60_000
+const CLOUD_FAST_LATENCY_MS = 2_500
 
 // ── Image generation detection ────────────────────────────────────────────────
 
@@ -115,6 +117,18 @@ export function selectRoute(settings: Settings, prompt: string): RouteDecision {
       maxTokens: adaptMaxTokens(settings.cloudMaxTokens, text),
       temperature: adaptTemperature(settings.temperature, text),
       useWebSearch: true,
+      generateImage: false,
+      imagePrompt: '',
+    }
+  }
+
+  if (shouldPreferCloudFastPath(settings)) {
+    return {
+      target: 'cloud',
+      reason: 'Smart mode routed to cloud because cloud is healthy and local is unstable',
+      maxTokens: adaptMaxTokens(settings.cloudMaxTokens, text),
+      temperature: adaptTemperature(settings.temperature, text),
+      useWebSearch: false,
       generateImage: false,
       imagePrompt: '',
     }
@@ -253,13 +267,25 @@ function shouldAvoidLocalInSmart(settings: Settings): boolean {
   const logs = settings.errorLogs ?? []
   if (logs.length === 0) return false
 
-  return logs.some(entry => {
+  let transientLocalFailures = 0
+
+  const hardLocalFailure = logs.some(entry => {
     if (!entry.at || Date.now() - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) return false
     const route = (entry.route ?? '').toLowerCase()
     const message = (entry.message ?? '').toLowerCase()
 
     const localRoute = route === 'local' || route.includes('->local')
     if (!localRoute) return false
+
+    if (
+      message.includes('timeout') ||
+      message.includes('timed out') ||
+      message.includes('failed to fetch') ||
+      message.includes('econnrefused') ||
+      message.includes('network')
+    ) {
+      transientLocalFailures += 1
+    }
 
     return (
       message.includes('memory layout cannot be allocated') ||
@@ -268,6 +294,38 @@ function shouldAvoidLocalInSmart(settings: Settings): boolean {
       (message.includes('ollama error (500)') && message.includes('memory'))
     )
   })
+
+  return hardLocalFailure || transientLocalFailures >= 1
+}
+
+function shouldPreferCloudFastPath(settings: Settings): boolean {
+  if (settings.provider !== 'smart') return false
+  if (!isCloudHealthyAndFast(settings)) return false
+
+  const localModelMissing = !settings.localModel?.trim()
+  return localModelMissing || shouldAvoidLocalInSmart(settings)
+}
+
+function isCloudHealthyAndFast(settings: Settings): boolean {
+  const now = Date.now()
+  const cloudBase = (settings.cloudBaseUrl ?? '').toLowerCase().trim()
+  if (!cloudBase) return false
+
+  const connectivity = settings.cloudConnectivity ?? []
+  const current = connectivity.find(item => {
+    if (!item.ok) return false
+    if (!item.checkedAt || now - item.checkedAt > CLOUD_HEALTH_FRESH_WINDOW_MS) return false
+    const fromLabel = extractBaseUrlFromLabel(item.label)
+    return fromLabel === cloudBase
+  })
+
+  if (!current) return false
+  return current.latencyMs > 0 && current.latencyMs <= CLOUD_FAST_LATENCY_MS
+}
+
+function extractBaseUrlFromLabel(label: string): string {
+  const match = label.match(/\((https?:\/\/[^)]+)\)/i)
+  return (match?.[1] ?? '').trim().toLowerCase()
 }
 
 function shouldAvoidLegacyInSmart(settings: Settings): boolean {

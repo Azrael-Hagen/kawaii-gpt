@@ -102,6 +102,48 @@ describe('smartRouting', () => {
     expect(decision.target).toBe('cloud')
   })
 
+  it('routes smart mode to cloud for short prompts when local has recent transient failures and cloud is healthy', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'smart' as const,
+      localModel: 'gemma3:12b',
+      cloudBaseUrl: 'https://openrouter.ai/api/v1',
+      cloudConnectivity: [
+        {
+          id: 'main',
+          label: 'Principal (https://openrouter.ai/api/v1)',
+          ok: true,
+          detail: 'OK',
+          latencyMs: 780,
+          checkedAt: Date.now(),
+        },
+      ],
+      errorLogs: [
+        {
+          id: 'e2',
+          source: 'chat' as const,
+          severity: 'error' as const,
+          message: 'signal timed out',
+          route: 'local',
+          status: 'report-ready' as const,
+          at: Date.now(),
+          analysis: {
+            category: 'timeout' as const,
+            probableCause: 'Local stalled',
+            suggestedFix: 'Use cloud path',
+            recognitionNotes: ['category:timeout'],
+            autoRepairTried: true,
+            autoRepairApplied: false,
+            reportMarkdown: 'x',
+          },
+        },
+      ],
+    }
+
+    const decision = selectRoute(settings, 'Dime un chiste corto')
+    expect(decision.target).toBe('cloud')
+  })
+
   it('avoids legacy route when repeated recent legacy failures exist', () => {
     const settings = {
       ...DEFAULT_SETTINGS,
