@@ -248,21 +248,31 @@
 ## [CP-12.1] 2026-03-29
 **Status**: Passed
 **Decisions made**:
-- Added a dedicated attachment normalization layer so generic files are converted into safe persisted metadata, extracted text context, or vision payloads depending on model capability
-- Kept persona authoring structured in Settings instead of forcing everything into a raw system prompt textarea
-- Persisted real TTS playback diagnostics so voice verification is observable after each response, not inferred from preferences alone
 
 **Trade-offs**:
-- Binary documents without local extraction are represented as metadata only in this release; that preserves compatibility, but not deep file parsing for PDFs or office formats yet
-- Vision capability detection is heuristic by provider/model family, which is robust enough for current targets but not a formal capability handshake
 
 **Debt deferred**:
-- Add extraction for PDFs, DOCX, and spreadsheet formats
-- Add per-message UI badges for which attachments were truly processed as vision inputs vs text-only context
 
 **Next steps**:
-- Add drag-and-drop attachments in the chat window
-- Add an import/export flow for reusable character presets
+
+## [CP-18] 2026-04-03
+**Status**: Passed
+**Decisions made**:
+- Extracted token-limit handling into `services/chatResilience.ts` to decouple resilience logic from `useChat` orchestration
+- Added provider-aware learned token cap from recent 402/credit errors to reduce repeat failures in consecutive messages
+- Added automatic same-provider retry with reduced `max_tokens` before rotating provider when quota/token cap is detected
+
+**Trade-offs**:
+- Automatic retry prioritizes delivery continuity over preserving the originally requested output length
+- Token cap learning uses recent error heuristics and provider text matching, which is robust in practice but still string-based
+
+**Debt deferred**:
+- Add explicit provider health contracts in E2E tests (with mocked provider responses) for full route-level regression protection
+- Consider persisting provider token caps as structured state instead of inferring from error logs
+
+**Next steps**:
+- Add an integration test that simulates 402 then successful retry with reduced tokens
+- Surface current effective token cap per provider in diagnostics UI for transparency
 
 ## [CP-13.1] 2026-03-28
 **Status**: Passed

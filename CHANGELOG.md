@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.23] - 2026-04-04
+### Added
+- New token resilience module (`chatResilience`) to centralize parsing of provider affordability errors and adaptive token-cap derivation from recent failures
+- Unit tests dedicated to token affordability parsing and cap computation to protect upgrade-time behavior
+
+### Changed
+- Smart/cloud orchestration now learns per-provider token caps from recent error logs and applies safer `max_tokens` values before request dispatch
+- On quota/credit affordability failures, the chat flow retries once on the same provider with a reduced token budget before rotating providers
+- Message bubbles now show long date-time format for clearer conversation timeline context
+
+### Fixed
+- Resolved recurring OpenRouter affordability regression where responses failed with errors like `requested up to N` and `can only afford M`
+- Improved chat fluidity under long conversations by reducing render and stream-update pressure during assistant streaming
+
 ## [0.4.6] - 2026-03-30
 ### Added
 - Timeouts robustos para operaciones de chat y streaming en clientes Ollama/OpenAI-compatible/Legacy para evitar esperas indefinidas

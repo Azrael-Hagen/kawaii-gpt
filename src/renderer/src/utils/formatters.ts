@@ -24,6 +24,20 @@ export function formatTime(ms: number): string {
 }
 
 /**
+ * Format a Unix timestamp (ms) to a long, human-readable date+time string.
+ */
+export function formatDateTimeLong(ms: number): string {
+  return new Intl.DateTimeFormat(undefined, {
+    weekday: 'long',
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  }).format(new Date(ms))
+}
+
+/**
  * Format a Unix timestamp (ms) to a relative date label.
  */
 export function formatRelativeDate(ms: number): string {

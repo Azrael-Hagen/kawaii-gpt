@@ -3,7 +3,7 @@ import { User, Bot, Copy, FileText, ImageIcon, Volume2 } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { Message } from '@/types'
-import { formatFileSize, formatTime } from '@/utils/formatters'
+import { formatDateTimeLong, formatFileSize } from '@/utils/formatters'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useVoiceOutput } from '@/hooks/useVoiceOutput'
 
@@ -49,7 +49,7 @@ function MessageBubbleBase({ message, convId }: Props) {
           )}
           <div className="flex items-center justify-end gap-1 mt-1.5 text-[10px] text-white/70">
             <User size={10} />
-            <span>{formatTime(message.timestamp)}</span>
+            <span>{formatDateTimeLong(message.timestamp)}</span>
             {/* Delete button, only show on hover */}
             {convId && (
               <button
@@ -142,7 +142,7 @@ function MessageBubbleBase({ message, convId }: Props) {
               </>
             )}
           </div>
-          <span>{formatTime(message.timestamp)}</span>
+          <span>{formatDateTimeLong(message.timestamp)}</span>
         </div>
       </div>
     </div>

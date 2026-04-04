@@ -14,6 +14,7 @@ import { analyzeErrorMessage, appendErrorLog, createErrorLogEntry, getLearnedRep
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
+import { computeQuotaRetryMaxTokens, deriveTokenCapFromRecentErrors } from '@/services/chatResilience'
 import { getProviderApiKey, getSecretKey } from '@/utils/secureSettings'
 import { titleFromMessage } from '@/utils/formatters'
 import { buildSystemPrompt } from '@/utils/systemPrompt'
@@ -30,7 +31,7 @@ interface CloudCfg {
 }
 
 const SOFT_REFUSAL_ERR = 'SOFT_REFUSAL'
-const STREAM_PARTIAL_UPDATE_MS = 48
+const STREAM_PARTIAL_UPDATE_MS = 90
 const LOCAL_CONFLICT_WINDOW_MS = 10 * 60_000
 const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
@@ -43,6 +44,9 @@ const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
 const CONTEXT_BUDGET_MAX_MESSAGES = 16
 const ROTATION_JITTER_MIN_MS = 120
 const ROTATION_JITTER_MAX_MS = 450
+const CLOUD_CONNECTIVITY_FRESH_MS = 20 * 60_000
+const SMART_MAX_CLOUD_ATTEMPTS = 2
+const MANUAL_CLOUD_MAX_ATTEMPTS = 3
 
 /**
  * Session-level blacklist for providers with fatal errors (auth/quota/model).
@@ -603,6 +607,52 @@ function countRecentProviderFailures(settings: Settings, cfg: CloudCfg): { auth:
   return counters
 }
 
+function isFatalConnectivityDetail(detail: string): boolean {
+  const lower = (detail ?? '').toLowerCase()
+  return (
+    lower.includes('sin api key') ||
+    lower.includes('invalid api key') ||
+    lower.includes('unauthorized') ||
+    lower.includes('credenciales inválidas') ||
+    lower.includes('credit limit exceeded') ||
+    lower.includes('quota') ||
+    lower.includes('model not found') ||
+    lower.includes('no encuentra el modelo') ||
+    lower.includes('no endpoints found') ||
+    lower.includes('402')
+  )
+}
+
+function shouldSkipProviderByConnectivity(settings: Settings, cfg: CloudCfg): boolean {
+  const now = Date.now()
+  const connectivity = settings.cloudConnectivity ?? []
+  const match = connectivity.find(item => {
+    const baseUrl = extractBaseUrlFromConnectivityLabel(item.label)
+    return baseUrl && baseUrl.toLowerCase() === cfg.baseUrl.toLowerCase()
+  })
+
+  if (!match) return false
+  if (!match.checkedAt || now - match.checkedAt > CLOUD_CONNECTIVITY_FRESH_MS) return false
+  if (match.ok) return false
+  return isFatalConnectivityDetail(match.detail)
+}
+
+function pruneCloudQueue(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
+  if (queue.length <= 1) return queue
+
+  const viable = queue.filter(cfg => {
+    if (sessionBlacklistedProviders.has(cfg.baseUrl.toLowerCase())) return false
+    if (shouldSkipProviderByConnectivity(settings, cfg)) return false
+
+    const fails = countRecentProviderFailures(settings, cfg)
+    if (fails.auth >= 1) return false
+    if (fails.timeout >= 2) return false
+    return true
+  })
+
+  return viable.length > 0 ? viable : queue
+}
+
 function rankCloudProviders(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
   if (queue.length <= 1) return queue
 
@@ -861,7 +911,11 @@ export function useChat(models: AIModel[] = []) {
         sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
         const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
         const healthyQueue = await filterHealthyCloudProviders(builtCloudQueue)
-        cloudQueue = rankCloudProviders(currentSettings, healthyQueue)
+        cloudQueue = pruneCloudQueue(currentSettings, rankCloudProviders(currentSettings, healthyQueue))
+        const maxCloudAttempts = currentSettings.provider === 'smart'
+          ? SMART_MAX_CLOUD_ATTEMPTS
+          : MANUAL_CLOUD_MAX_ATTEMPTS
+        cloudQueue = cloudQueue.slice(0, maxCloudAttempts)
       } catch (err) {
         if (enableDiag) diagLog(`Error en preparación: ${String(err)}`)
         const msg = summarizeProviderError(err)
@@ -1218,7 +1272,14 @@ export function useChat(models: AIModel[] = []) {
             const cfg = cloudQueue[idx]
             const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
             const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
-            const providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+            let providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+            const learnedCap = deriveTokenCapFromRecentErrors(
+              useSettingsStore.getState().settings.errorLogs,
+              [cfg.baseUrl, cfg.label, cfg.model],
+            )
+            if (typeof learnedCap === 'number' && learnedCap > 0) {
+              providerMaxTokens = Math.max(120, Math.min(providerMaxTokens, learnedCap))
+            }
             const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
             try {
               if (settings.streamResponses) {
@@ -1284,6 +1345,58 @@ export function useChat(models: AIModel[] = []) {
 
     // ── Cloud mode with automatic provider rotation ───────────────────────────
     if (cloudQueue.length === 0) {
+      if (settings.provider === 'smart') {
+        const localModel = resolveLocalModelName(settings, models)
+        if (localModel && !avoidLocalFallback) {
+          const localClient = new OllamaClient(settings.localBaseUrl)
+          const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(useSettingsStore.getState().settings, true)
+          const localAttempt = createProviderAttemptAbort(abortRef.current!.signal, localAttemptTimeoutMs)
+          try {
+            updateMessage(
+              convId,
+              assistantId,
+              '⚡ Cloud no disponible en este intento. Aplicando fallback local para mantener el chat fluido...',
+              true,
+            )
+            if (settings.streamResponses) {
+              let acc = ''
+              const streamUi = createStreamUpdateController((partial) => {
+                updateMessage(convId!, assistantId, partial, true)
+              })
+              for await (const chunk of localClient.streamChat(
+                localModel, effectiveMessages, sysPrompt,
+                decision.temperature, settings.localMaxTokens, localAttempt.signal,
+              )) {
+                acc += chunk
+                streamUi.push(acc, chunk)
+              }
+              streamUi.flush(acc)
+              updateMessage(convId!, assistantId, acc, false, undefined, `local (smart fallback) • ${localModel}`)
+            } else {
+              const r = await withAbortableTimeout(
+                localClient.chat(
+                  localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+                ),
+                localAttempt.signal,
+                localAttemptTimeoutMs,
+              )
+              updateMessage(convId!, assistantId, r, false, undefined, `local (smart fallback) • ${localModel}`)
+            }
+            logError('Cloud queue vacia en Smart mode; fallback local aplicado.', {
+              provider: settings.localBaseUrl,
+              route: 'cloud->local',
+              autoRepairApplied: true,
+            })
+            setIsLoading(false)
+            return
+          } catch {
+            // If local fallback also fails, continue to standard cloud error handling below.
+          } finally {
+            localAttempt.clear()
+          }
+        }
+      }
+
       const notice = '⚠️ Sin proveedor cloud disponible. Revisa API keys, endpoint y modelo en Ajustes ⚙️.'
       const detailed = withRepairSuggestion(useSettingsStore.getState().settings, notice, 'cloud-queue', 'cloud')
       logError(detailed, { route: 'cloud-queue' })
@@ -1306,7 +1419,14 @@ export function useChat(models: AIModel[] = []) {
       const cfg = cloudQueue[idx]
       const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
       const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
-      const providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+      let providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+      const learnedCap = deriveTokenCapFromRecentErrors(
+        useSettingsStore.getState().settings.errorLogs,
+        [cfg.baseUrl, cfg.label, cfg.model],
+      )
+      if (typeof learnedCap === 'number' && learnedCap > 0) {
+        providerMaxTokens = Math.max(120, Math.min(providerMaxTokens, learnedCap))
+      }
       const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
 
       try {
@@ -1430,7 +1550,58 @@ export function useChat(models: AIModel[] = []) {
           return
         }
 
-        const errMsg = summarizeProviderError(err)
+        let errMsg = summarizeProviderError(err)
+
+        if (isQuotaError(err)) {
+          const retryMaxTokens = computeQuotaRetryMaxTokens(providerMaxTokens, errMsg)
+          if (retryMaxTokens && retryMaxTokens < providerMaxTokens) {
+            updateMessage(
+              convId!, assistantId,
+              `⚡ ${cfg.label}: limite de creditos/tokens detectado → reintentando con max_tokens=${retryMaxTokens}...`,
+              true,
+            )
+
+            const retryAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
+            try {
+              if (settings.streamResponses) {
+                let acc = ''
+                const streamUi = createStreamUpdateController((partial) => {
+                  updateMessage(convId!, assistantId, partial, true)
+                })
+                for await (const chunk of cloudClient.streamChat(
+                  cfg.model, effectiveMessages, sysPrompt,
+                  decision.temperature, retryMaxTokens, retryAttempt.signal,
+                )) {
+                  acc += chunk
+                  streamUi.push(acc, chunk)
+                }
+                streamUi.flush(acc)
+                updateMessage(convId!, assistantId, acc, false, undefined, `${cfg.label} • auto-token-cap`)
+              } else {
+                const retried = await withAbortableTimeout(
+                  cloudClient.chat(
+                    cfg.model, effectiveMessages, sysPrompt, decision.temperature, retryMaxTokens,
+                  ),
+                  retryAttempt.signal,
+                  providerTimeoutMs,
+                )
+                updateMessage(convId!, assistantId, retried, false, undefined, `${cfg.label} • auto-token-cap`)
+              }
+              updateSettings({ cloudDiagnostics: null })
+              setIsLoading(false)
+              return
+            } catch (retryErr) {
+              errMsg = summarizeProviderError(retryErr)
+              logError(
+                `Reintento auto-token-cap fallo (${retryMaxTokens}): ${errMsg}`,
+                { provider: cfg.label, route: 'cloud' },
+              )
+            } finally {
+              retryAttempt.clear()
+            }
+          }
+        }
+
         const learnedRepair = getLearnedRepairRecommendation(useSettingsStore.getState().settings, errMsg, {
           provider: cfg.label,
           route: 'cloud',

@@ -30,6 +30,15 @@ Public API:
 Purpose:
 - Turns release notes into structured local knowledge so diagnostics can reason about what changed across app versions
 
+## services/chatResilience.ts
+Public API:
+- `extractAffordableTokensFromError(message)`
+- `computeQuotaRetryMaxTokens(requestedMaxTokens, errorMessage)`
+- `deriveTokenCapFromRecentErrors(logs, providerHints, now?)`
+
+Purpose:
+- Centralizes token-limit resilience so chat can auto-reduce `max_tokens` after 402/credit errors and learn per-provider token caps from recent failures
+
 ## services/attachments.ts
 Public API:
 - `createMessageAttachment(file)`

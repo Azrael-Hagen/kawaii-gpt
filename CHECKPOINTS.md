@@ -257,3 +257,16 @@
 - [x] Suite de pruebas (unit + e2e) y build en verde despues del ajuste
 **Status**: `[x]`
 **Notes**: Se eligio aprendizaje local basado en casos y conocimiento de release para mantener la recuperacion liviana, determinista y util incluso durante fallos de red.
+
+---
+
+## CP-18: Upgrade-Safe Chat Reliability Contract
+**Milestone**: Evitar regresiones de chat en updates mediante contratos tecnicos y pruebas de resiliencia
+**Acceptance Criteria**:
+- [x] Existe un modulo reutilizable de resiliencia de tokens que no depende de hooks UI (`services/chatResilience.ts`)
+- [x] El flujo cloud aplica auto-reduccion de `max_tokens` y reintento inmediato cuando el proveedor devuelve limite de creditos/tokens
+- [x] El flujo cloud aprende un token cap por proveedor desde errores recientes para prevenir reincidencia en siguientes mensajes
+- [x] Hay pruebas unitarias dedicadas para parsing y token cap derivado (`services/chatResilience.test.ts`)
+- [x] Build y suite de pruebas verdes despues del cambio
+**Status**: `[x]`
+**Notes**: Contrato anti-regresion agregado para que upgrades de routing/modelos no rompan el envio por limites de token en proveedores cloud.

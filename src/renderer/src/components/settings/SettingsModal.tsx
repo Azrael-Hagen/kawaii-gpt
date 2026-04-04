@@ -492,13 +492,22 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
       main.issueType = 'model'
     }
 
-    // Blacklist providers with fatal non-recoverable errors for the rest of the session
+    // Keep session blacklist aligned with latest benchmark:
+    // - Never blacklist the main provider here (it may be auto-healed by model/key updates)
+    // - If a provider recovers, remove it from blacklist immediately
     for (const r of results) {
+      const target = cloudTargets.find(t => t.id === r.id)
+      if (!target?.baseUrl) continue
+      const key = target.baseUrl.toLowerCase()
+
+      if (r.ok) {
+        sessionBlacklistedProviders.delete(key)
+        continue
+      }
+
+      if (r.id === 'main') continue
       if (r.issueType === 'auth' || r.issueType === 'quota' || r.issueType === 'model') {
-        const target = cloudTargets.find(t => t.id === r.id)
-        if (target?.baseUrl) {
-          sessionBlacklistedProviders.add(target.baseUrl.toLowerCase())
-        }
+        sessionBlacklistedProviders.add(key)
       }
     }
 

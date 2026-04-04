@@ -19,15 +19,25 @@ const ChatWindow = ({ messages, isLoading, convId, debugMode }: Props) => {
   const hydratedRef = useRef(false)
   const { settings } = useSettingsStore()
   const { autoSpeakOnce, markAsSpoken } = useVoiceOutput(settings)
+  const maxVisibleMessages = isLoading ? 140 : 220
+  const visibleMessages = messages.length > maxVisibleMessages
+    ? messages.slice(-maxVisibleMessages)
+    : messages
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: isLoading ? 'auto' : 'smooth', block: 'end' })
   }, [messages, isLoading])
 
   useEffect(() => {
-    const latestAssistant = [...messages]
-      .reverse()
-      .find(m => m.role === 'assistant' && !m.isStreaming && Boolean(m.content?.trim()))
+    if (isLoading) return
+    let latestAssistant: Message | undefined
+    for (let i = messages.length - 1; i >= 0; i -= 1) {
+      const candidate = messages[i]
+      if (candidate.role === 'assistant' && !candidate.isStreaming && Boolean(candidate.content?.trim())) {
+        latestAssistant = candidate
+        break
+      }
+    }
     if (!latestAssistant) return
 
     if (!hydratedRef.current) {
@@ -38,7 +48,7 @@ const ChatWindow = ({ messages, isLoading, convId, debugMode }: Props) => {
 
     if (!settings.voiceOutputEnabled || !settings.voiceAutoPlayResponses) return
     void autoSpeakOnce(latestAssistant.id, latestAssistant.content)
-  }, [messages, settings.voiceAutoPlayResponses, settings.voiceOutputEnabled, autoSpeakOnce, markAsSpoken])
+  }, [messages, isLoading, settings.voiceAutoPlayResponses, settings.voiceOutputEnabled, autoSpeakOnce, markAsSpoken])
 
   if (messages.length === 0) {
     return (
@@ -89,7 +99,12 @@ const ChatWindow = ({ messages, isLoading, convId, debugMode }: Props) => {
         </div>
       )}
       <div className="max-w-4xl mx-auto space-y-4">
-        {messages.map((msg: Message) => (
+        {messages.length > visibleMessages.length && (
+          <div className="rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-3 py-2 text-xs text-kawaii-dim">
+            Modo fluido activo: mostrando {visibleMessages.length} de {messages.length} mensajes para mantener el chat responsivo.
+          </div>
+        )}
+        {visibleMessages.map((msg: Message) => (
           <MessageBubble key={msg.id} message={msg} convId={convId} />
         ))}
         {isLoading && <TypingIndicator />}
