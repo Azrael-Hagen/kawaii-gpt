@@ -268,18 +268,40 @@ function shouldAvoidLocalInSmart(settings: Settings): boolean {
   const logs = settings.errorLogs ?? []
   if (!Array.isArray(logs) || logs.length === 0) return false
 
-  let transientLocalFailures = 0
+  const now = Date.now()
 
-  const hardLocalFailure = logs.some(entry => {
-    if (!entry || !entry.at || typeof entry.at !== 'number') return false
-    if (Date.now() - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) return false
+  // Check for hard failures first (early exit on hard failure found)
+  for (const entry of logs) {
+    if (!entry || !entry.at || typeof entry.at !== 'number') continue
+    if (now - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) continue
     
     const route = (entry.route ?? '').toLowerCase()
     const message = (entry.message ?? '').toLowerCase()
 
     const localRoute = route === 'local' || route.includes('->local')
-    if (!localRoute) return false
+    if (!localRoute) continue
 
+    // Hard failure: immediate return
+    if (
+      message.includes('memory layout cannot be allocated') ||
+      message.includes('out of memory') ||
+      message.includes('cannot allocate') ||
+      (message.includes('ollama error (500)') && message.includes('memory'))
+    ) {
+      return true
+    }
+  }
+
+  // Check for transient failures (at least 1 is enough to avoid local)
+  for (const entry of logs) {
+    if (!entry || !entry.at || typeof entry.at !== 'number') continue
+    if (now - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) continue
+    
+    const route = (entry.route ?? '').toLowerCase()
+    const localRoute = route === 'local' || route.includes('->local')
+    if (!localRoute) continue
+
+    const message = (entry.message ?? '').toLowerCase()
     if (
       message.includes('timeout') ||
       message.includes('timed out') ||
@@ -287,18 +309,11 @@ function shouldAvoidLocalInSmart(settings: Settings): boolean {
       message.includes('econnrefused') ||
       message.includes('network')
     ) {
-      transientLocalFailures += 1
+      return true  // Early exit on first transient failure
     }
+  }
 
-    return (
-      message.includes('memory layout cannot be allocated') ||
-      message.includes('out of memory') ||
-      message.includes('cannot allocate') ||
-      (message.includes('ollama error (500)') && message.includes('memory'))
-    )
-  })
-
-  return hardLocalFailure || transientLocalFailures >= 1
+  return false
 }
 
 function shouldPreferCloudFastPath(settings: Settings): boolean {
@@ -360,21 +375,29 @@ function shouldAvoidLegacyInSmart(settings: Settings): boolean {
   const logs = settings.errorLogs ?? []
   if (logs.length === 0) return false
 
-  const recentLegacyFailures = logs.filter(entry => {
-    if (!entry.at || Date.now() - entry.at > LEGACY_AVOIDANCE_WINDOW_MS) return false
-    const route = (entry.route ?? '').toLowerCase()
-    const message = (entry.message ?? '').toLowerCase()
-    if (!(route === 'legacy' || route.includes('->legacy'))) return false
+  let recentLegacyFailureCount = 0
+  const now = Date.now()
 
-    return (
+  // Early exit: stop counting after we find 2 failures
+  for (const entry of logs) {
+    if (!entry || !entry.at || now - entry.at > LEGACY_AVOIDANCE_WINDOW_MS) continue
+    
+    const route = (entry.route ?? '').toLowerCase()
+    if (!(route === 'legacy' || route.includes('->legacy'))) continue
+
+    const message = (entry.message ?? '').toLowerCase()
+    if (
       message.includes('timeout') ||
       message.includes('timed out') ||
       message.includes('failed to fetch') ||
       message.includes('econnrefused') ||
       message.includes('no disponible')
-    )
-  })
+    ) {
+      recentLegacyFailureCount += 1
+      if (recentLegacyFailureCount >= 2) return true
+    }
+  }
 
-  return recentLegacyFailures.length >= 2
+  return false
 }
 
