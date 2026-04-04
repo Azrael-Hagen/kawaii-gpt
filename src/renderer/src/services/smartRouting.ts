@@ -263,14 +263,17 @@ function shouldBackoffCloud(settings: Settings): boolean {
 }
 
 function shouldAvoidLocalInSmart(settings: Settings): boolean {
-  if (settings.provider !== 'smart') return false
+  if (!settings || settings.provider !== 'smart') return false
+  
   const logs = settings.errorLogs ?? []
-  if (logs.length === 0) return false
+  if (!Array.isArray(logs) || logs.length === 0) return false
 
   let transientLocalFailures = 0
 
   const hardLocalFailure = logs.some(entry => {
-    if (!entry.at || Date.now() - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) return false
+    if (!entry || !entry.at || typeof entry.at !== 'number') return false
+    if (Date.now() - entry.at > LOCAL_AVOIDANCE_WINDOW_MS) return false
+    
     const route = (entry.route ?? '').toLowerCase()
     const message = (entry.message ?? '').toLowerCase()
 
@@ -299,33 +302,57 @@ function shouldAvoidLocalInSmart(settings: Settings): boolean {
 }
 
 function shouldPreferCloudFastPath(settings: Settings): boolean {
-  if (settings.provider !== 'smart') return false
-  if (!isCloudHealthyAndFast(settings)) return false
+  if (!settings || settings.provider !== 'smart') return false
+  
+  // Only consider cloud fast-path if we have a valid local model or local is unstable
+  const hasLocalModel = settings.localModel && settings.localModel.trim()
+  if (hasLocalModel && !shouldAvoidLocalInSmart(settings)) {
+    // Local is available and stable, don't force cloud
+    return false
+  }
 
-  const localModelMissing = !settings.localModel?.trim()
-  return localModelMissing || shouldAvoidLocalInSmart(settings)
+  // Either no local model or local is unstable - check if cloud is healthy
+  return isCloudHealthyAndFast(settings)
+}
+
+function normalizeUrl(url: string): string {
+  let normalized = (url ?? '').toLowerCase().trim()
+  // Remove trailing slash for consistent comparison
+  if (normalized.endsWith('/')) {
+    normalized = normalized.slice(0, -1)
+  }
+  return normalized
 }
 
 function isCloudHealthyAndFast(settings: Settings): boolean {
   const now = Date.now()
-  const cloudBase = (settings.cloudBaseUrl ?? '').toLowerCase().trim()
-  if (!cloudBase) return false
+  const cloudBaseRaw = settings.cloudBaseUrl ?? ''
+  if (!cloudBaseRaw.trim()) return false
 
+  const cloudBase = normalizeUrl(cloudBaseRaw)
   const connectivity = settings.cloudConnectivity ?? []
+  
+  if (!Array.isArray(connectivity) || connectivity.length === 0) return false
+
   const current = connectivity.find(item => {
-    if (!item.ok) return false
-    if (!item.checkedAt || now - item.checkedAt > CLOUD_HEALTH_FRESH_WINDOW_MS) return false
-    const fromLabel = extractBaseUrlFromLabel(item.label)
+    if (!item || !item.ok) return false
+    if (!item.checkedAt || typeof item.checkedAt !== 'number') return false
+    if (now - item.checkedAt > CLOUD_HEALTH_FRESH_WINDOW_MS) return false
+    if (typeof item.latencyMs !== 'number' || item.latencyMs <= 0) return false
+    
+    const fromLabel = extractBaseUrlFromLabel(item.label ?? '')
     return fromLabel === cloudBase
   })
 
   if (!current) return false
-  return current.latencyMs > 0 && current.latencyMs <= CLOUD_FAST_LATENCY_MS
+  return current.latencyMs <= CLOUD_FAST_LATENCY_MS
 }
 
 function extractBaseUrlFromLabel(label: string): string {
+  if (!label || typeof label !== 'string') return ''
   const match = label.match(/\((https?:\/\/[^)]+)\)/i)
-  return (match?.[1] ?? '').trim().toLowerCase()
+  if (!match || !match[1]) return ''
+  return normalizeUrl(match[1])
 }
 
 function shouldAvoidLegacyInSmart(settings: Settings): boolean {
