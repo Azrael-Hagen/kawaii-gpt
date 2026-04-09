@@ -39,9 +39,9 @@ const LOCAL_CONFLICT_WINDOW_MS = 10 * 60_000
 const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
-const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 24_000
-const CHAT_TIMEOUT_MS = 90_000
-const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 24_000
+const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 28_000
+const CHAT_TIMEOUT_MS = 110_000
+const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 28_000
 const CLOUD_CONTEXT_BUDGET_CHARS = 28_000
 const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
 const CONTEXT_BUDGET_MAX_MESSAGES = 16
@@ -509,7 +509,12 @@ function getProviderLatencyMs(settings: Settings, baseUrl?: string): number {
   return sample?.latencyMs ?? 0
 }
 
-function computeAdaptiveProviderTimeoutMs(settings: Settings, baseUrl?: string): number {
+function computeAdaptiveProviderTimeoutMs(
+  settings: Settings,
+  baseUrl?: string,
+  contextChars = 0,
+  maxTokens = 0,
+): number {
   let timeoutMs = CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS
   const providerLatency = getProviderLatencyMs(settings, baseUrl)
   const rtt = getNetworkRttMs()
@@ -522,10 +527,21 @@ function computeAdaptiveProviderTimeoutMs(settings: Settings, baseUrl?: string):
   if (rtt >= 700) timeoutMs += 4_000
   if (rtt >= 1_200) timeoutMs += 8_000
 
-  return Math.max(12_000, Math.min(45_000, timeoutMs))
+  if (contextChars >= 10_000) timeoutMs += 4_000
+  if (contextChars >= 18_000) timeoutMs += 6_000
+
+  if (maxTokens >= 700) timeoutMs += 3_000
+  if (maxTokens >= 1_200) timeoutMs += 5_000
+
+  return Math.max(16_000, Math.min(70_000, timeoutMs))
 }
 
-function computeLocalAttemptTimeoutMs(settings: Settings, isSmartRoute: boolean): number {
+function computeLocalAttemptTimeoutMs(
+  settings: Settings,
+  isSmartRoute: boolean,
+  contextChars = 0,
+  maxTokens = 0,
+): number {
   let timeoutMs = isSmartRoute ? LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS : 36_000
   const rtt = getNetworkRttMs()
 
@@ -533,7 +549,13 @@ function computeLocalAttemptTimeoutMs(settings: Settings, isSmartRoute: boolean)
   if (rtt >= 700) timeoutMs += 4_000
   if (rtt >= 1_200) timeoutMs += 8_000
 
-  return Math.max(16_000, Math.min(60_000, timeoutMs))
+  if (contextChars >= 8_000) timeoutMs += 4_000
+  if (contextChars >= 14_000) timeoutMs += 6_000
+
+  if (maxTokens >= 700) timeoutMs += 3_000
+  if (maxTokens >= 1_200) timeoutMs += 4_000
+
+  return Math.max(18_000, Math.min(70_000, timeoutMs))
 }
 
 function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number): number {
@@ -546,7 +568,7 @@ function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number)
   if (rtt >= 700) timeoutMs += 8_000
   if (rtt >= 1_200) timeoutMs += 12_000
 
-  return Math.max(CHAT_TIMEOUT_MS, Math.min(120_000, timeoutMs))
+  return Math.max(CHAT_TIMEOUT_MS, Math.min(180_000, timeoutMs))
 }
 
 function computeAdaptiveMaxTokens(
@@ -1291,8 +1313,18 @@ export function useChat(models: AIModel[] = []) {
       const localModel = resolveLocalModelName(settings, models) || stripPrefix(settings.localModel || model)
       const localClient = new OllamaClient(settings.localBaseUrl)
       const localStartedAt = Date.now()
-      addChatTraceEvent(traceId, 'local_attempt_start', { model: localModel })
-      const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(useSettingsStore.getState().settings, settings.provider === 'smart')
+      const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(
+        useSettingsStore.getState().settings,
+        settings.provider === 'smart',
+        effectiveContextChars,
+        settings.localMaxTokens,
+      )
+      addChatTraceEvent(traceId, 'local_attempt_start', {
+        model: localModel,
+        timeoutMs: localAttemptTimeoutMs,
+        promptTokens: estimateTokensFromChars(text.length),
+        contextTokens: estimateTokensFromChars(effectiveContextChars),
+      })
       const localAttempt = createProviderAttemptAbort(abortRef.current!.signal, localAttemptTimeoutMs)
       let localFailed = false
       try {
@@ -1374,7 +1406,6 @@ export function useChat(models: AIModel[] = []) {
           for (let idx = 0; idx < cloudQueue.length; idx++) {
             const cfg = cloudQueue[idx]
             const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
-            const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
             let providerMaxTokens = computeAdaptiveMaxTokens(
               cfg.maxTokens,
               text.length,
@@ -1389,6 +1420,12 @@ export function useChat(models: AIModel[] = []) {
             if (typeof learnedCap === 'number' && learnedCap > 0) {
               providerMaxTokens = Math.max(120, Math.min(providerMaxTokens, learnedCap))
             }
+            const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(
+              useSettingsStore.getState().settings,
+              cfg.baseUrl,
+              effectiveContextChars,
+              providerMaxTokens,
+            )
             const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
             addChatTraceEvent(traceId, 'cloud_attempt_start', {
               provider: cfg.label,
@@ -1483,7 +1520,12 @@ export function useChat(models: AIModel[] = []) {
         const localModel = resolveLocalModelName(settings, models)
         if (localModel && !avoidLocalFallback) {
           const localClient = new OllamaClient(settings.localBaseUrl)
-          const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(useSettingsStore.getState().settings, true)
+          const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(
+            useSettingsStore.getState().settings,
+            true,
+            effectiveContextChars,
+            settings.localMaxTokens,
+          )
           const localAttempt = createProviderAttemptAbort(abortRef.current!.signal, localAttemptTimeoutMs)
           try {
             updateMessage(
@@ -1552,7 +1594,6 @@ export function useChat(models: AIModel[] = []) {
     for (let idx = 0; idx < cloudQueue.length; idx++) {
       const cfg = cloudQueue[idx]
       const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
-      const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
       let providerMaxTokens = computeAdaptiveMaxTokens(
         cfg.maxTokens,
         text.length,
@@ -1567,6 +1608,12 @@ export function useChat(models: AIModel[] = []) {
       if (typeof learnedCap === 'number' && learnedCap > 0) {
         providerMaxTokens = Math.max(120, Math.min(providerMaxTokens, learnedCap))
       }
+      const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(
+        useSettingsStore.getState().settings,
+        cfg.baseUrl,
+        effectiveContextChars,
+        providerMaxTokens,
+      )
       const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
       addChatTraceEvent(traceId, 'cloud_attempt_start', {
         provider: cfg.label,

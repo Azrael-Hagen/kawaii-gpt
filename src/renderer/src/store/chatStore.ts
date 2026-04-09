@@ -1,6 +1,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import type { Conversation, Message, Role, UserMemoryFact } from '@/types'
+import {
+  buildConversationExportPayload,
+  parseConversationImportPayload,
+  type ConversationExportPayload,
+  type ConversationImportMode,
+} from '@/services/conversationTransfer'
 
 // ── ID generator ─────────────────────────────────────────────────────────────
 
@@ -29,6 +35,11 @@ interface ChatState {
   upsertUserMemory: (convId: string, memory: Omit<UserMemoryFact, 'id' | 'updatedAt'>) => void
   clearUserMemory: (convId: string) => void
   removeUserMemoryFact: (convId: string, memoryId: string) => void
+  exportBackup: () => ConversationExportPayload
+  importBackup: (
+    raw: unknown,
+    mode?: ConversationImportMode,
+  ) => { imported: number; activeId: string | null }
 }
 const storeImpl = (set, get) => ({
   conversations: [],
@@ -183,6 +194,76 @@ const storeImpl = (set, get) => ({
           : c
       ),
     })),
+
+  exportBackup: () => {
+    const state = get()
+    return buildConversationExportPayload(state.conversations, state.activeId)
+  },
+
+  importBackup: (raw, mode = 'merge') => {
+    const parsed = parseConversationImportPayload(raw)
+    if (parsed.conversations.length === 0) {
+      return { imported: 0, activeId: get().activeId }
+    }
+
+    const remappedActive: { current: string | null } = { current: null }
+
+    const remappedConversations = parsed.conversations.map((conversation) => {
+      const newConversationId = genId()
+
+      const messageIdMap = new Map<string, string>()
+      const remappedMessages: Message[] = conversation.messages.map(message => {
+        const newMessageId = genId()
+        messageIdMap.set(message.id, newMessageId)
+        return {
+          ...message,
+          id: newMessageId,
+          timestamp: Number.isFinite(message.timestamp) ? message.timestamp : Date.now(),
+          isStreaming: false,
+        }
+      })
+
+      const remappedMemory = (conversation.userMemory ?? []).map(memory => ({
+        ...memory,
+        id: genId(),
+        sourceMessageId: messageIdMap.get(memory.sourceMessageId) ?? '',
+        updatedAt: Number.isFinite(memory.updatedAt) ? memory.updatedAt : Date.now(),
+      }))
+
+      if (conversation.id === parsed.activeId) {
+        remappedActive.current = newConversationId
+      }
+
+      return {
+        ...conversation,
+        id: newConversationId,
+        messages: remappedMessages,
+        userMemory: remappedMemory,
+        createdAt: Number.isFinite(conversation.createdAt) ? conversation.createdAt : Date.now(),
+        updatedAt: Number.isFinite(conversation.updatedAt) ? conversation.updatedAt : Date.now(),
+      }
+    })
+
+    set(state => {
+      const nextConversations = mode === 'replace'
+        ? remappedConversations
+        : [...remappedConversations, ...state.conversations]
+
+      const nextActiveId = remappedActive.current
+        ?? (mode === 'replace' ? remappedConversations[0]?.id ?? null : state.activeId ?? remappedConversations[0]?.id ?? null)
+
+      return {
+        conversations: nextConversations,
+        activeId: nextActiveId,
+      }
+    })
+
+    const finalState = get()
+    return {
+      imported: remappedConversations.length,
+      activeId: finalState.activeId,
+    }
+  },
 })
 
 export const useChatStore = create<ChatState>()(

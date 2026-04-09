@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload, Trash2 } from 'lucide-react'
+import { X, RefreshCw, Cloud, Server, Plus, Image, Bot, Volume2, Upload, Trash2, Download } from 'lucide-react'
 import { useSettingsStore } from '@/store/settingsStore'
 import { useChatStore } from '@/store/chatStore'
 import { OllamaClient, OpenAICompatibleClient } from '@/services/aiClient'
@@ -7,6 +7,7 @@ import { sessionBlacklistedProviders } from '@/hooks/useChat'
 import { listSpeechVoices } from '@/services/voice'
 import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
 import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus } from '@/types'
+import type { ConversationImportMode } from '@/services/conversationTransfer'
 import { formatTime } from '@/utils/formatters'
 import { getCatalogModelsForBaseUrl } from '@/services/cloudCatalog'
 
@@ -71,7 +72,7 @@ interface ModelProbeResult {
 
 export default function SettingsModal({ open, onClose, models, status, onRefreshModels }: Props) {
   const { settings, update, reset } = useSettingsStore()
-  const { activeId, conversations, clearUserMemory, removeUserMemoryFact } = useChatStore()
+  const { activeId, conversations, clearUserMemory, removeUserMemoryFact, exportBackup, importBackup } = useChatStore()
   const [apiKey, setApiKey] = useState('')
   const [additionalKeys, setAdditionalKeys] = useState<Record<string, string>>({})
   const [checkingCloud, setCheckingCloud] = useState(false)
@@ -81,7 +82,10 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const [legacyRuntimeStatus, setLegacyRuntimeStatus] = useState<{ running: boolean; pid?: number; command?: string; lastError?: string } | null>(null)
   const [legacyRuntimeBusy, setLegacyRuntimeBusy] = useState(false)
   const [availableVoices, setAvailableVoices] = useState<Array<{ name: string; lang: string; default: boolean }>>([])
+  const [chatImportMode, setChatImportMode] = useState<ConversationImportMode>('merge')
+  const [chatTransferNotice, setChatTransferNotice] = useState('')
   const characterImageInputRef = useRef<HTMLInputElement | null>(null)
+  const chatImportInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -125,6 +129,47 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
       ),
     )
     onClose()
+  }
+
+  const exportChatConversations = () => {
+    const payload = exportBackup()
+    const content = JSON.stringify(payload, null, 2)
+    const blob = new Blob([content], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `kawaii-chat-backup-${stamp}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setChatTransferNotice(`Respaldo exportado (${payload.chats.conversations.length} conversación(es)).`)
+  }
+
+  const beginChatImport = (mode: ConversationImportMode) => {
+    setChatImportMode(mode)
+    chatImportInputRef.current?.click()
+  }
+
+  const onChatImportFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const raw = JSON.parse(text)
+      const result = importBackup(raw, chatImportMode)
+
+      if (result.imported <= 0) {
+        setChatTransferNotice('No se encontraron conversaciones válidas en el archivo seleccionado.')
+      } else {
+        const modeLabel = chatImportMode === 'replace' ? 'reemplazo total' : 'mezcla con conversaciones actuales'
+        setChatTransferNotice(`Importación completada (${result.imported} conversación(es), modo: ${modeLabel}).`)
+      }
+    } catch {
+      setChatTransferNotice('No se pudo importar. Verifica que el archivo sea JSON válido de conversaciones.')
+    } finally {
+      event.target.value = ''
+    }
   }
 
   const applyRecommendedProfile = () => {
@@ -1685,6 +1730,46 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
             <p className="text-[11px] text-kawaii-dim leading-relaxed">
               Seguridad: esta memoria vive solo en local y se elimina automáticamente al limpiar o borrar la conversación.
             </p>
+
+            <div className="rounded-lg border border-kawaii-surface-3 bg-kawaii-surface-2 p-2.5 space-y-2">
+              <div className="text-xs font-semibold text-kawaii-text">Respaldo y carga de conversaciones</div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={exportChatConversations}
+                  className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-2.5 py-1.5 text-xs text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                >
+                  <Download size={12} />
+                  Exportar conversaciones
+                </button>
+                <button
+                  type="button"
+                  onClick={() => beginChatImport('merge')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-2.5 py-1.5 text-xs text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                >
+                  <Upload size={12} />
+                  Importar (agregar)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => beginChatImport('replace')}
+                  className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-2.5 py-1.5 text-xs text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                >
+                  <Upload size={12} />
+                  Importar (reemplazar todo)
+                </button>
+              </div>
+              {chatTransferNotice && (
+                <p className="text-[11px] text-kawaii-dim leading-relaxed">{chatTransferNotice}</p>
+              )}
+              <input
+                ref={chatImportInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onChatImportFileSelected}
+              />
+            </div>
           </section>
 
           {/* ── Actions ─────────────────────────────────────────────────────── */}
