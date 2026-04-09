@@ -9,6 +9,9 @@ function sleep(ms) {
 
 async function readRuntimeState(page) {
   return page.evaluate(async () => {
+    const runtimeMode = typeof window.api?.getRuntimeMode === 'function'
+      ? await window.api.getRuntimeMode().catch(() => 'unknown')
+      : 'unknown'
     const rawSettings = localStorage.getItem('kawaii-gpt-settings')
     const rawChats = localStorage.getItem('kawaii-gpt-chats')
     const parsedSettings = rawSettings ? JSON.parse(rawSettings) : null
@@ -40,6 +43,11 @@ async function readRuntimeState(page) {
     const traceSummaries = debugApi?.getRecentTraceSummaries?.(3) ?? []
 
     return {
+      runtime: {
+        mode: runtimeMode,
+        url: location.href,
+        origin: location.origin,
+      },
       settings: settings
         ? {
             provider: settings.provider,
@@ -117,6 +125,7 @@ try {
     prompt: PROMPT,
     settled: result.done,
     reason: result.reason,
+    runtime: state.runtime,
     settings: state.settings,
     secrets: state.secrets,
     latestMessages: state.latestMessages,

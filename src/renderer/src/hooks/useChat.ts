@@ -14,7 +14,12 @@ import { analyzeErrorMessage, appendErrorLog, createErrorLogEntry, updateErrorKn
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
-import { computeQuotaRetryMaxTokens, deriveTokenCapFromRecentErrors } from '@/services/chatResilience'
+import {
+  computeQuotaRetryMaxTokens,
+  computeSafeContextCharsFromPromptLimit,
+  derivePromptLimitFromRecentErrors,
+  deriveTokenCapFromRecentErrors,
+} from '@/services/chatResilience'
 import { addChatTraceEvent, finishChatTrace, startChatTrace, type ChatTraceStatus } from '@/services/chatTrace'
 import { estimateTokensFromChars } from '@/services/tokenBudget'
 import { computeChatRequestBudget } from '@/services/chatRequestBudget'
@@ -50,6 +55,8 @@ const ROTATION_JITTER_MAX_MS = 450
 const CLOUD_CONNECTIVITY_FRESH_MS = 20 * 60_000
 const SMART_MAX_CLOUD_ATTEMPTS = 2
 const MANUAL_CLOUD_MAX_ATTEMPTS = 3
+const DEFAULT_CONSERVATIVE_CLOUD_PROMPT_LIMIT = 2_400
+const DEFAULT_OPENROUTER_FREE_PROMPT_LIMIT = 1_900
 
 /**
  * Session-level blacklist for providers with fatal errors (auth/quota/model).
@@ -130,6 +137,13 @@ function isFatalProviderError(err: unknown): boolean {
   )
 }
 
+function inferPromptLimitFromCloudQueue(queue: CloudCfg[], preferFreeTier: boolean): number {
+  const hasOpenRouter = queue.some(item => item.baseUrl.toLowerCase().includes('openrouter.ai'))
+  if (hasOpenRouter && preferFreeTier) return DEFAULT_OPENROUTER_FREE_PROMPT_LIMIT
+  if (hasOpenRouter) return 2_800
+  return DEFAULT_CONSERVATIVE_CLOUD_PROMPT_LIMIT
+}
+
 function estimateContextChars(message: ChatMessageInput): number {
   const base = (message.content || '').length
   const attachments = (message.attachments ?? []).reduce((acc, attachment) => {
@@ -145,13 +159,18 @@ function trimMessagesForBudget(messages: ChatMessageInput[], budgetChars: number
   if (messages.length === 0) return messages
 
   const recent = messages.slice(-maxMessages)
+  const droppedOlder = messages.slice(0, Math.max(0, messages.length - recent.length))
   const reversedKept: ChatMessageInput[] = []
   let used = 0
+  let cutIndex = -1
 
   for (let i = recent.length - 1; i >= 0; i--) {
     const message = recent[i]
     const available = budgetChars - used
-    if (available <= 240) break
+    if (available <= 240) {
+      cutIndex = i
+      break
+    }
 
     let content = message.content || ''
     if (content.length > available) {
@@ -169,6 +188,18 @@ function trimMessagesForBudget(messages: ChatMessageInput[], budgetChars: number
   }
 
   const kept = reversedKept.reverse()
+  const droppedRecent = cutIndex >= 0 ? recent.slice(0, cutIndex + 1) : []
+  const dropped = [...droppedOlder, ...droppedRecent]
+
+  if (dropped.length > 0) {
+    const availableForSummary = Math.max(0, budgetChars - used)
+    const compacted = buildCompactedHistoryMessage(dropped, availableForSummary)
+    if (compacted) {
+      kept.unshift(compacted)
+      used += estimateContextChars(compacted)
+    }
+  }
+
   const latest = recent[recent.length - 1]
   const tail = kept[kept.length - 1]
   if (!tail || tail.role !== latest.role || tail.content !== latest.content) {
@@ -176,6 +207,74 @@ function trimMessagesForBudget(messages: ChatMessageInput[], budgetChars: number
   }
 
   return kept
+}
+
+function summarizeCompactLine(content: string, maxChars = 180): string {
+  const normalized = content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (!normalized) return ''
+
+  const pieces = normalized
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map(piece => piece.trim())
+    .filter(Boolean)
+
+  const keywords = [
+    'importante', 'error', 'timeout', 'token', 'objetivo', 'necesito', 'quiero', 'prefiero',
+    'recuerda', 'gusta', 'nombre', 'vivo', 'trabajo', 'config', 'modelo', 'proveedor',
+  ]
+
+  const scored = pieces
+    .map((piece, idx) => {
+      const lower = piece.toLowerCase()
+      const score = keywords.reduce((acc, key) => acc + (lower.includes(key) ? 1 : 0), 0) + (idx === 0 ? 0.2 : 0)
+      return { piece, score }
+    })
+    .sort((a, b) => b.score - a.score)
+
+  const top = scored.slice(0, 2).map(item => item.piece).join(' ')
+  const fallback = pieces[0] ?? normalized
+  const line = (top || fallback).replace(/\s+/g, ' ').trim()
+  return line.length > maxChars ? `${line.slice(0, maxChars - 1)}…` : line
+}
+
+function buildCompactedHistoryMessage(messages: ChatMessageInput[], availableChars: number): ChatMessageInput | null {
+  if (availableChars < 260 || messages.length === 0) return null
+
+  const maxItems = Math.min(8, Math.max(3, Math.floor(availableChars / 120)))
+  const selected = messages
+    .filter(message => message.role === 'user' || message.role === 'assistant')
+    .slice(-maxItems)
+
+  const lines: string[] = []
+  for (const message of selected) {
+    const summary = summarizeCompactLine(message.content, 170)
+    if (!summary) continue
+    const roleLabel = message.role === 'assistant' ? 'Asistente' : 'Usuario'
+    lines.push(`- ${roleLabel}: ${summary}`)
+  }
+
+  if (lines.length === 0) return null
+
+  const header = 'Resumen compacto del historial anterior (preserva contexto importante):'
+  let content = `${header}\n${lines.join('\n')}`
+
+  if (content.length > availableChars) {
+    const allowedLines = Math.max(2, Math.floor((availableChars - header.length - 20) / 80))
+    content = `${header}\n${lines.slice(-allowedLines).join('\n')}`
+  }
+
+  if (content.length > availableChars) {
+    content = `${content.slice(0, Math.max(120, availableChars - 1))}…`
+  }
+
+  return {
+    role: 'user',
+    content,
+  }
 }
 
 function summarizeProviderError(err: unknown): string {
@@ -1179,24 +1278,88 @@ export function useChat(models: AIModel[] = []) {
       }
     }
 
-    const contextBudget = target === 'local' ? LOCAL_CONTEXT_BUDGET_CHARS : CLOUD_CONTEXT_BUDGET_CHARS
+    const cloudHints = cloudQueue.flatMap(cfg => [cfg.baseUrl, cfg.label, cfg.model])
+    const learnedPromptLimit = target === 'local'
+      ? null
+      : derivePromptLimitFromRecentErrors(
+        useSettingsStore.getState().settings.errorLogs,
+        cloudHints,
+      )
+
+    const adaptiveCloudContextBudget = learnedPromptLimit
+      ? computeSafeContextCharsFromPromptLimit(learnedPromptLimit, text.length)
+      : CLOUD_CONTEXT_BUDGET_CHARS
+
+    const requestedCloudMaxTokens = Math.max(120, settings.cloudMaxTokens || 700, decision.maxTokens || 0)
+    const requestedLocalMaxTokens = Math.max(120, settings.localMaxTokens || 400)
+    const tokenDrivenCloudContextBudget = requestedCloudMaxTokens <= 500
+      ? 4_200
+      : requestedCloudMaxTokens <= 700
+        ? 5_400
+        : requestedCloudMaxTokens <= 900
+          ? 6_600
+          : requestedCloudMaxTokens <= 1_200
+            ? 8_400
+            : CLOUD_CONTEXT_BUDGET_CHARS
+
+    const tokenDrivenLocalContextBudget = requestedLocalMaxTokens <= 320
+      ? 2_900
+      : requestedLocalMaxTokens <= 450
+        ? 3_600
+        : requestedLocalMaxTokens <= 700
+          ? 4_600
+          : 6_000
+
+    const systemPromptChars = sysPrompt.length
+    const systemPromptTokens = estimateTokensFromChars(systemPromptChars)
+    const inferredPromptLimitTokens = target === 'local'
+      ? null
+      : (learnedPromptLimit ?? inferPromptLimitFromCloudQueue(cloudQueue, settings.preferFreeTier))
+
+    const inputDrivenCloudContextBudget = inferredPromptLimitTokens
+      ? Math.max(
+        1_200,
+        Math.floor(inferredPromptLimitTokens * 3.8) - systemPromptChars - Math.floor(text.length * 1.1) - 260,
+      )
+      : CLOUD_CONTEXT_BUDGET_CHARS
+
+    const systemAwareLocalContextBudget = Math.max(1_400, Math.min(8_000, 9_000 - systemPromptChars))
+
+    const contextBudget = target === 'local'
+      ? Math.min(LOCAL_CONTEXT_BUDGET_CHARS, tokenDrivenLocalContextBudget, systemAwareLocalContextBudget)
+      : Math.min(
+        CLOUD_CONTEXT_BUDGET_CHARS,
+        adaptiveCloudContextBudget,
+        tokenDrivenCloudContextBudget,
+        inputDrivenCloudContextBudget,
+      )
     const beforeTrimMessages = effectiveMessages.length
     const beforeTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
     effectiveMessages = trimMessagesForBudget(effectiveMessages, contextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
     const afterTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
     const effectiveContextChars = afterTrimChars
-      const estimatedPromptTokens = estimateTokensFromChars(text.length)
-      const estimatedContextTokens = estimateTokensFromChars(effectiveContextChars)
-      addChatTraceEvent(traceId, 'context_budget', {
-        target,
-        beforeMessages: beforeTrimMessages,
-        beforeChars: beforeTrimChars,
-        afterMessages: effectiveMessages.length,
-        afterChars: afterTrimChars,
-        promptChars: text.length,
-        promptTokens: estimatedPromptTokens,
-        contextTokens: estimatedContextTokens,
-      })
+    const estimatedPromptTokens = estimateTokensFromChars(text.length)
+    const estimatedContextTokens = estimateTokensFromChars(effectiveContextChars)
+    addChatTraceEvent(traceId, 'context_budget', {
+      target,
+      beforeMessages: beforeTrimMessages,
+      beforeChars: beforeTrimChars,
+      afterMessages: effectiveMessages.length,
+      afterChars: afterTrimChars,
+      promptChars: text.length,
+      promptTokens: estimatedPromptTokens,
+      systemPromptChars,
+      systemPromptTokens,
+      contextTokens: estimatedContextTokens,
+      budgetChars: contextBudget,
+      requestedCloudMaxTokens,
+      requestedLocalMaxTokens,
+      tokenDrivenCloudBudgetChars: tokenDrivenCloudContextBudget,
+      tokenDrivenLocalBudgetChars: tokenDrivenLocalContextBudget,
+      inputDrivenCloudBudgetChars: inputDrivenCloudContextBudget,
+      learnedPromptLimitTokens: learnedPromptLimit,
+      inferredPromptLimitTokens,
+    })
     if (enableDiag && (beforeTrimMessages !== effectiveMessages.length || beforeTrimChars !== afterTrimChars)) {
       diagLog(`Contexto recortado: ${beforeTrimMessages} mensajes (${beforeTrimChars} chars aprox) -> ${effectiveMessages.length} mensajes (${afterTrimChars} chars aprox).`)
     }
@@ -1401,6 +1564,48 @@ export function useChat(models: AIModel[] = []) {
       }
       // Smart failover: try cloud, then legacy if enabled
       if (localFailed) {
+        const fallbackCloudHints = cloudQueue.flatMap(cfg => [cfg.baseUrl, cfg.label, cfg.model])
+        const fallbackLearnedPromptLimit = derivePromptLimitFromRecentErrors(
+          useSettingsStore.getState().settings.errorLogs,
+          fallbackCloudHints,
+        )
+        const fallbackAdaptiveCloudBudget = fallbackLearnedPromptLimit
+          ? computeSafeContextCharsFromPromptLimit(fallbackLearnedPromptLimit, text.length)
+          : CLOUD_CONTEXT_BUDGET_CHARS
+        const fallbackRequestedCloudMaxTokens = Math.max(120, settings.cloudMaxTokens || 700)
+        const fallbackTokenDrivenCloudBudget = fallbackRequestedCloudMaxTokens <= 500
+          ? 4_200
+          : fallbackRequestedCloudMaxTokens <= 700
+            ? 5_400
+            : fallbackRequestedCloudMaxTokens <= 900
+              ? 6_600
+              : fallbackRequestedCloudMaxTokens <= 1_200
+                ? 8_400
+                : CLOUD_CONTEXT_BUDGET_CHARS
+        const fallbackInferredPromptLimit = fallbackLearnedPromptLimit
+          ?? inferPromptLimitFromCloudQueue(cloudQueue, settings.preferFreeTier)
+        const fallbackInputDrivenBudget = Math.max(
+          1_200,
+          Math.floor(fallbackInferredPromptLimit * 3.8) - systemPromptChars - Math.floor(text.length * 1.1) - 260,
+        )
+        const fallbackCloudContextBudget = Math.min(
+          CLOUD_CONTEXT_BUDGET_CHARS,
+          fallbackAdaptiveCloudBudget,
+          fallbackTokenDrivenCloudBudget,
+          fallbackInputDrivenBudget,
+        )
+        const beforeFallbackChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
+        effectiveMessages = trimMessagesForBudget(effectiveMessages, fallbackCloudContextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
+        const afterFallbackChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
+        addChatTraceEvent(traceId, 'context_budget_retrim_cloud_fallback', {
+          beforeChars: beforeFallbackChars,
+          afterChars: afterFallbackChars,
+          budgetChars: fallbackCloudContextBudget,
+          inferredPromptLimitTokens: fallbackInferredPromptLimit,
+          learnedPromptLimitTokens: fallbackLearnedPromptLimit,
+          requestedCloudMaxTokens: fallbackRequestedCloudMaxTokens,
+        })
+
         // Try cloud providers if available
         if (cloudQueue.length > 0) {
           for (let idx = 0; idx < cloudQueue.length; idx++) {

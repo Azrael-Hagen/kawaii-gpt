@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { computeQuotaRetryMaxTokens, deriveTokenCapFromRecentErrors, extractAffordableTokensFromError } from '@/services/chatResilience'
+import {
+  computeQuotaRetryMaxTokens,
+  computeSafeContextCharsFromPromptLimit,
+  derivePromptLimitFromRecentErrors,
+  deriveTokenCapFromRecentErrors,
+  extractAffordableTokensFromError,
+  extractPromptLimitFromError,
+} from '@/services/chatResilience'
 import type { ErrorLogEntry } from '@/types'
 
 describe('chatResilience', () => {
@@ -38,5 +45,43 @@ describe('chatResilience', () => {
     ]
 
     expect(deriveTokenCapFromRecentErrors(logs, ['openai/gpt-5.4-mini'], now)).toBe(427)
+  })
+
+  it('extracts prompt limit from context-size provider errors', () => {
+    const message = 'Provider error (402): Prompt tokens limit exceeded: 3267 > 1900.'
+    expect(extractPromptLimitFromError(message)).toBe(1900)
+  })
+
+  it('derives prompt token limit from recent cloud provider errors', () => {
+    const now = Date.now()
+    const logs: ErrorLogEntry[] = [
+      {
+        id: 'e2',
+        source: 'chat',
+        severity: 'error',
+        message: 'Provider error (402): Prompt tokens limit exceeded: 3267 > 1900.',
+        provider: 'cloud • openai/gpt-5.4-mini',
+        route: 'cloud',
+        status: 'report-ready',
+        at: now - 1_500,
+        analysis: {
+          category: 'performance',
+          probableCause: 'context too large',
+          suggestedFix: 'trim context',
+          recognitionNotes: [],
+          autoRepairTried: false,
+          autoRepairApplied: false,
+          reportMarkdown: 'x',
+        },
+      },
+    ]
+
+    expect(derivePromptLimitFromRecentErrors(logs, ['openai/gpt-5.4-mini'], now)).toBe(1900)
+  })
+
+  it('computes safe context chars from learned prompt limit', () => {
+    const chars = computeSafeContextCharsFromPromptLimit(1900, 240)
+    expect(chars).toBeGreaterThan(5_000)
+    expect(chars).toBeLessThan(8_000)
   })
 })
