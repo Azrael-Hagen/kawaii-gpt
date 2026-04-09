@@ -16,6 +16,13 @@ function compact(text: string): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
+function extractStatusCode(message: string): number | undefined {
+  const match = compact(message).match(/\b(4\d\d|5\d\d)\b/)
+  if (!match) return undefined
+  const code = Number(match[1])
+  return Number.isFinite(code) ? code : undefined
+}
+
 function fingerprintError(message: string): string {
   return compact(message)
     .toLowerCase()
@@ -70,6 +77,11 @@ function extractRecognitionNotes(
   if (lower.includes('model') && lower.includes('not found')) notes.push('signal:model-not-found')
   if (lower.includes('resource not found')) notes.push('signal:resource-not-found')
   if (lower.includes('rate limit') || lower.includes('too many requests') || lower.includes('429')) notes.push('signal:rate-limit')
+  if (lower.includes('credit limit') || lower.includes('insufficient_quota') || lower.includes('can only afford') || lower.includes('402')) {
+    notes.push('signal:quota-credit')
+  }
+  if (lower.includes('requested up to')) notes.push('signal:requested-up-to')
+  if (lower.includes('can only afford')) notes.push('signal:can-only-afford')
   if (lower.includes('openrouter')) notes.push('provider-hint:openrouter')
   if (lower.includes('ollama')) notes.push('provider-hint:ollama')
   if (lower.includes('legacy') || lower.includes('kawaii')) notes.push('provider-hint:legacy')
@@ -125,28 +137,6 @@ function predictRepairFromKnowledgeBase(
   }
 }
 
-export function getLearnedRepairRecommendation(
-  settings: Settings,
-  message: string,
-  context?: { provider?: string; route?: string },
-): { suggestion?: string; confidence?: number } {
-  const fingerprint = fingerprintError(message)
-  const analysis = analyzeErrorMessage(message, {
-    provider: context?.provider,
-    route: context?.route,
-    knowledgeBase: settings.errorKnowledgeBase,
-  })
-
-  return predictRepairFromKnowledgeBase(
-    settings.errorKnowledgeBase ?? [],
-    fingerprint,
-    analysis.category,
-    context?.provider,
-    context?.route,
-    analysis.recognitionNotes,
-  )
-}
-
 export function analyzeErrorMessage(
   message: string,
   context?: { provider?: string; route?: string; autoRepairApplied?: boolean; knowledgeBase?: ErrorKnowledgeCase[] },
@@ -158,7 +148,17 @@ export function analyzeErrorMessage(
   let probableCause = 'Fallo no clasificado en la app o el proveedor.'
   let suggestedFix = 'Revisar el reporte generado y repetir la accion con diagnostico habilitado.'
 
-  if (lower.includes('failed to fetch') || lower.includes('network') || lower.includes('load failed')) {
+  if (
+    lower.includes('402') ||
+    lower.includes('credit limit') ||
+    lower.includes('insufficient_quota') ||
+    lower.includes('can only afford') ||
+    lower.includes('requested up to')
+  ) {
+    category = 'policy'
+    probableCause = 'Credito/cuota insuficiente o presupuesto de tokens mayor al permitido por el proveedor.'
+    suggestedFix = 'Reducir max_tokens/contexto, usar otro proveedor con saldo, o recargar creditos.'
+  } else if (lower.includes('failed to fetch') || lower.includes('network') || lower.includes('load failed')) {
     category = 'network'
     probableCause = 'Fallo de red, CORS, endpoint inaccesible o proveedor temporalmente caido.'
     suggestedFix = 'Verificar base URL, conectividad, VPN/proxy y disponibilidad del proveedor.'
@@ -186,6 +186,7 @@ export function analyzeErrorMessage(
 
   const autoRepairApplied = Boolean(context?.autoRepairApplied)
   const autoRepairTried = category === 'network' || category === 'timeout' || category === 'runtime' || category === 'policy'
+  const statusCode = extractStatusCode(message)
   const recognitionNotes = extractRecognitionNotes(message, category, {
     provider: context?.provider,
     route: context?.route,
@@ -211,6 +212,8 @@ export function analyzeErrorMessage(
     `- Source route: ${context?.route || 'unknown'}`,
     `- Provider: ${context?.provider || 'unknown'}`,
     `- Category: ${category}`,
+    ...(typeof statusCode === 'number' ? [`- HTTP code detected: ${statusCode}`] : []),
+    `- Fingerprint: ${fingerprint}`,
     `- Auto repair tried: ${autoRepairTried ? 'yes' : 'no'}`,
     `- Auto repair applied: ${autoRepairApplied ? 'yes' : 'no'}`,
     ...(learned.suggestion ? [`- Learned suggestion: ${learned.suggestion}`, `- Learned confidence: ${Math.round((learned.confidence ?? 0) * 100)}%`] : []),

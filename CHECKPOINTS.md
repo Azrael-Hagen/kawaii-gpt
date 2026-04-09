@@ -270,3 +270,16 @@
 - [x] Build y suite de pruebas verdes despues del cambio
 **Status**: `[x]`
 **Notes**: Contrato anti-regresion agregado para que upgrades de routing/modelos no rompan el envio por limites de token en proveedores cloud.
+
+---
+
+## CP-19: Practical Chat Observability & Cleanup
+**Milestone**: Instrumentar trazas utiles sin UI intrusiva y retirar diagnostico de bajo valor operativo
+**Acceptance Criteria**:
+- [x] Existe trazado estructurado por chat/intento/proveedor con timestamps y duraciones (`services/chatTrace.ts`)
+- [x] `useChat` emite eventos en puntos criticos (decision de ruta, contexto, intentos local/legacy/cloud, timeout, reintento por cuota)
+- [x] Se expone acceso de desarrollo no-UI para inspeccionar/limpiar trazas (`window.__kawaiiChatDebug`)
+- [x] Se eliminan paneles de conocimiento no accionables del modal de opciones para enfocar diagnostico en logs utiles
+- [x] Tests relevantes y build en verde despues de la limpieza
+**Status**: `[x]`
+**Notes**: Se prioriza observabilidad accionable para debugging real sobre componentes de aprendizaje que no estaban mejorando recuperacion en runtime.

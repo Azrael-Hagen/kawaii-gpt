@@ -934,7 +934,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
 
               <div className="mt-2 border border-kawaii-surface-3 rounded-lg bg-kawaii-surface-2 p-2.5 text-xs space-y-2">
                 <div className="flex items-center justify-between">
-                  <span className="font-semibold text-kawaii-text">Logger automatico y asistente de errores</span>
+                  <span className="font-semibold text-kawaii-text">Logger automatico y diagnostico de errores</span>
                   <label className="flex items-center gap-2 text-kawaii-dim">
                     <input
                       type="checkbox"
@@ -958,7 +958,12 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                             <span>{formatTime(entry.at)}</span>
                           </div>
                           <div>{entry.message}</div>
+                          <div className="text-[11px]">Provider: {entry.provider || 'n/a'} · Ruta: {entry.route || 'n/a'}</div>
+                          {entry.analysis.recognitionNotes.length > 0 && (
+                            <div className="text-[11px]">Señales: {entry.analysis.recognitionNotes.slice(0, 5).join(' | ')}</div>
+                          )}
                           <div className="text-[11px]">{entry.analysis.probableCause}</div>
+                          <div className="text-[11px]">Sugerencia: {entry.analysis.suggestedFix}</div>
                         </div>
                       ))}
                     </div>
@@ -1002,41 +1007,6 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                   </div>
                 )}
 
-                {settings.errorKnowledgeBase.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="font-semibold text-kawaii-text">Minimodelo local: casos aprendidos</div>
-                    <div className="max-h-36 overflow-auto space-y-1">
-                      {settings.errorKnowledgeBase.slice(0, 5).map(item => (
-                        <div key={item.id} className="rounded-md border border-kawaii-surface-3 px-2 py-1.5 text-kawaii-dim">
-                          <div className="text-kawaii-text font-semibold">{item.category} → {item.recommendedAction}</div>
-                          <div>Veces visto: {item.seenCount} · Exitos: {item.successCount}</div>
-                          <div>Ruta: {item.route || 'n/a'} · Provider: {item.provider || 'n/a'}</div>
-                          {item.recognitionNotes && item.recognitionNotes.length > 0 && (
-                            <div>Notas: {item.recognitionNotes.slice(0, 4).join(' | ')}</div>
-                          )}
-                          {item.sampleMessages && item.sampleMessages.length > 0 && (
-                            <div>Muestras: {item.sampleMessages.slice(0, 2).join(' || ')}</div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {settings.releaseKnowledgeBase.length > 0 && (
-                  <div className="space-y-1">
-                    <div className="font-semibold text-kawaii-text">Aprendizaje por versiones</div>
-                    <div className="max-h-36 overflow-auto space-y-1">
-                      {settings.releaseKnowledgeBase.slice(0, 3).map(item => (
-                        <div key={item.version} className="rounded-md border border-kawaii-surface-3 px-2 py-1.5 text-kawaii-dim">
-                          <div className="text-kawaii-text font-semibold">v{item.version} · {item.date}</div>
-                          {item.added.length > 0 && <div>Añadido: {item.added.slice(0, 2).join(' | ')}</div>}
-                          {item.fixed.length > 0 && <div>Corregido: {item.fixed.slice(0, 2).join(' | ')}</div>}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
               </div>
             </section>
           )}

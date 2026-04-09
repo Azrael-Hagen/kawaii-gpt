@@ -5,7 +5,7 @@ import { useSettingsStore } from '@/store/settingsStore'
 import { useChat } from '@/hooks/useChat'
 import { useModels } from '@/hooks/useModels'
 import { appendErrorLog, createErrorLogEntry, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
-import { ingestReleaseKnowledge } from '@/services/releaseLearning'
+import { clearChatTraces, getRecentChatTraces, summarizeChatTrace } from '@/services/chatTrace'
 
 export function useAppLogic() {
   const [showSettings, setShowSettings] = useState(false)
@@ -27,13 +27,16 @@ export function useAppLogic() {
   const debugMode = useDiagnosticsStore(s => s.debugMode)
 
   useEffect(() => {
-    window.api?.getVersion?.()
-      .then(version => {
-        const currentSettings = useSettingsStore.getState().settings
-        update({ releaseKnowledgeBase: ingestReleaseKnowledge(currentSettings, version) })
-      })
-      .catch(() => undefined)
-  }, [update])
+    ;(window as any).__kawaiiChatDebug = {
+      getRecentTraces: (limit = 20) => getRecentChatTraces(limit),
+      getRecentTraceSummaries: (limit = 10) => getRecentChatTraces(limit).map(summarizeChatTrace),
+      clearTraces: () => clearChatTraces(),
+    }
+
+    return () => {
+      delete (window as any).__kawaiiChatDebug
+    }
+  }, [])
 
   useEffect(() => {
     if (!appSettings.autoErrorAssistEnabled) return undefined

@@ -8,9 +8,11 @@ export default function Sidebar() {
   const { conversations, activeId, create, remove, setActive } = useChatStore()
   const { settings } = useSettingsStore()
   const [appVersion, setAppVersion] = useState('...')
+  const [runtimeMode, setRuntimeMode] = useState<'dev' | 'packaged' | 'unknown'>('unknown')
 
   useEffect(() => {
     window.api?.getVersion?.().then(setAppVersion).catch(() => setAppVersion('dev'))
+    window.api?.getRuntimeMode?.().then(setRuntimeMode).catch(() => setRuntimeMode('unknown'))
   }, [])
 
   const handleNew = () => {
@@ -67,7 +69,7 @@ export default function Sidebar() {
       {/* Footer */}
       <div className="p-3 border-t border-kawaii-surface-3">
         <p className="text-kawaii-dim text-xs text-center">
-          KawaiiGPT ✨ v{appVersion}
+          KawaiiGPT ✨ v{appVersion} [{runtimeMode.toUpperCase()}]
         </p>
       </div>
     </aside>

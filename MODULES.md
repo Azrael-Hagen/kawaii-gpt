@@ -16,7 +16,6 @@ Public API:
 - `createErrorLogEntry(...)`
 - `appendErrorLog(...)`
 - `updateErrorKnowledgeBase(...)`
-- `getLearnedRepairRecommendation(...)`
 
 Purpose:
 - Captures local diagnostics, classifies failures, and learns reusable repair actions from successful recovery paths
@@ -38,6 +37,18 @@ Public API:
 
 Purpose:
 - Centralizes token-limit resilience so chat can auto-reduce `max_tokens` after 402/credit errors and learn per-provider token caps from recent failures
+
+## services/chatTrace.ts
+Public API:
+- `startChatTrace(meta)`
+- `addChatTraceEvent(traceId, name, attrs?)`
+- `finishChatTrace(traceId, status, attrs?)`
+- `getRecentChatTraces(limit?)`
+- `clearChatTraces()`
+- `summarizeChatTrace(trace)`
+
+Purpose:
+- Provides non-UI trace instrumentation for chat performance and provider communication, with structured per-attempt events and compact summaries for debugging
 
 ## services/attachments.ts
 Public API:

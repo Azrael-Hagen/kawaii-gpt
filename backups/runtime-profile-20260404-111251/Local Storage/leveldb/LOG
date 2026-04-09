@@ -1,0 +1,19 @@
+2026/04/04-11:07:03.240 4c70 Reusing MANIFEST C:\Users\Azrael\AppData\Roaming\kawaii-gpt\Local Storage\leveldb/MANIFEST-000001
+2026/04/04-11:07:03.250 4c70 Recovering log #539
+2026/04/04-11:07:03.358 4c70 Level-0 table #542: started
+2026/04/04-11:07:03.518 4c70 Level-0 table #542: 7865836 bytes OK
+2026/04/04-11:07:03.528 4c70 Delete type=0 #539
+2026/04/04-11:07:03.532 3bc8 Compacting 4@0 + 2@1 files
+2026/04/04-11:07:03.773 3bc8 Generated table #544@0: 5 keys, 3931786 bytes
+2026/04/04-11:07:03.919 3bc8 Generated table #545@0: 1 keys, 3932625 bytes
+2026/04/04-11:07:03.923 3bc8 Compacted 4@0 + 2@1 files => 7864411 bytes
+2026/04/04-11:07:03.925 3bc8 compacted to: files[ 0 3 1 0 0 0 0 ]
+2026/04/04-11:07:03.926 3bc8 Delete type=2 #530
+2026/04/04-11:07:03.926 3bc8 Delete type=2 #531
+2026/04/04-11:07:03.927 3bc8 Delete type=2 #534
+2026/04/04-11:07:03.927 3bc8 Delete type=2 #536
+2026/04/04-11:07:03.927 3bc8 Delete type=2 #540
+2026/04/04-11:07:03.927 3bc8 Delete type=2 #542
+2026/04/04-11:10:15.801 3bc8 Level-0 table #547: started
+2026/04/04-11:10:15.886 3bc8 Level-0 table #547: 3933190 bytes OK
+2026/04/04-11:10:15.891 3bc8 Delete type=0 #543

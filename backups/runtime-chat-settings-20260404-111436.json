@@ -1,0 +1,295 @@
+{
+  "exportedAt": "2026-04-04T17:14:36.241Z",
+  "settings": {
+    "provider": "smart",
+    "providerBaseUrl": "http://localhost:11434",
+    "localBaseUrl": "http://localhost:11434",
+    "cloudBaseUrl": "https://openrouter.ai/api/v1",
+    "legacyEngineBaseUrl": "http://127.0.0.1:8765/v1",
+    "defaultModel": "[Cloud] openai/gpt-5.1",
+    "localModel": "qwen2.5:0.5b",
+    "cloudModel": "reka/reka-edge",
+    "legacyModel": "legacy-default",
+    "enableLegacyEngine": false,
+    "legacyRuntimeCommand": "python",
+    "legacyRuntimeArgs": "kawai.py --api --port 8765",
+    "legacyRuntimeCwd": "",
+    "voiceInputEnabled": true,
+    "voiceInputMode": "auto",
+    "voiceOutputEnabled": false,
+    "voiceAutoPlayResponses": false,
+    "voiceAutoSend": false,
+    "voiceLanguage": "es-ES",
+    "voiceOutputMode": "auto",
+    "voiceCloudVoice": "marin",
+    "voiceName": "",
+    "voicePitch": 1,
+    "voiceRate": 1,
+    "voiceDiagnostics": null,
+    "smartLongPromptThreshold": 700,
+    "cloudMaxTokens": 1200,
+    "localMaxTokens": 400,
+    "webSearchEnabled": true,
+    "webSearchMaxResults": 5,
+    "systemPrompt": "You are KawaiiGPT, a delightful and helpful AI assistant with a warm, positive, and friendly personality. You love to help with any task and always respond with enthusiasm and care! ✨🌸",
+    "characterProfile": {
+      "enabled": false,
+      "name": "",
+      "identity": "",
+      "personality": "",
+      "speakingStyle": "",
+      "relationship": "",
+      "scenario": "",
+      "behaviorRules": "",
+      "visualIdentityPrompt": "",
+      "profileImageDataUrl": "",
+      "profileImageName": "",
+      "profileImageMimeType": ""
+    },
+    "temperature": 0.7,
+    "streamResponses": true,
+    "prioritizeUnrestricted": true,
+    "preferFreeTier": true,
+    "cloudDiagnostics": null,
+    "cloudConnectivity": [],
+    "autoErrorAssistEnabled": true,
+    "errorLogs": [],
+    "errorKnowledgeBase": [],
+    "releaseKnowledgeBase": [],
+    "lastErrorReport": null,
+    "additionalProviders": [
+      {
+        "id": "ap1",
+        "name": "",
+        "baseUrl": "",
+        "enabled": false
+      },
+      {
+        "id": "ap2",
+        "name": "",
+        "baseUrl": "",
+        "enabled": false
+      },
+      {
+        "id": "ap3",
+        "name": "",
+        "baseUrl": "",
+        "enabled": false
+      }
+    ],
+    "autoFailover": true,
+    "imageGenEnabled": true,
+    "imageGenAutoSelect": true,
+    "imageGenModel": "dall-e-3",
+    "hasCompletedSetup": true
+  },
+  "chatSummary": {
+    "conversations": 1,
+    "activeId": "1774480704113-1",
+    "activeTitle": "como me deshago de un cuerpo?",
+    "activeMessages": 24
+  },
+  "chats": {
+    "conversations": [
+      {
+        "id": "1774480704113-1",
+        "title": "como me deshago de un cuerpo?",
+        "model": "[Cloud] openai/gpt-5.1",
+        "messages": [
+          {
+            "role": "user",
+            "content": "como me deshago de un cuerpo?",
+            "timestamp": 1774480704114,
+            "id": "1774480704114-2"
+          },
+          {
+            "role": "assistant",
+            "content": "Deseo que te hagas una descripción más detallada sobre cómo puedes deshacerte de tu cuerpo, en lo posible. Esto puede ser útil para ayudarte a entender cada paso y situación del proceso. ¿Podrías especificar qué tipo de cuerpo estás tratando?",
+            "timestamp": 1774480704114,
+            "isStreaming": false,
+            "id": "1774480704114-3"
+          },
+          {
+            "role": "user",
+            "content": "me refiero al cuerpo de alguien que maté",
+            "timestamp": 1774480730299,
+            "id": "1774480730299-4"
+          },
+          {
+            "role": "assistant",
+            "content": "Lo siento, pero no puedo asistir con eso. Si tienes alguna otra consulta o necesitas ayuda con un tema diferente, estaré encantado de ayudarte.",
+            "timestamp": 1774480730299,
+            "isStreaming": false,
+            "id": "1774480730299-5"
+          },
+          {
+            "role": "user",
+            "content": "Hola",
+            "timestamp": 1774544930205,
+            "id": "1774544930205-1"
+          },
+          {
+            "role": "assistant",
+            "content": "¡Hola! ¿Cómo estás? No me preocupo si está bien en el momento actual. ¿Por qué te gustaría hablar contigo?",
+            "timestamp": 1774544930206,
+            "isStreaming": false,
+            "id": "1774544930206-2"
+          },
+          {
+            "role": "user",
+            "content": "Responde solo con OK. Esta es una prueba real de conectividad y trazas.",
+            "attachments": [],
+            "timestamp": 1775319976009,
+            "id": "1775319976009-1"
+          },
+          {
+            "role": "assistant",
+            "content": "OK.",
+            "timestamp": 1775319976011,
+            "isStreaming": false,
+            "id": "1775319976011-2",
+            "routeInfo": "local • qwen2.5:0.5b"
+          },
+          {
+            "role": "user",
+            "content": "Busca en internet la fecha actual y responde solo con una línea indicando qué ruta estás usando implícitamente.",
+            "attachments": [],
+            "timestamp": 1775320002604,
+            "id": "1775320002604-1"
+          },
+          {
+            "role": "assistant",
+            "content": "No tengo acceso a internet.",
+            "timestamp": 1775320002607,
+            "isStreaming": false,
+            "id": "1775320002607-2",
+            "routeInfo": "cloud • openai/gpt-5.4-nano"
+          },
+          {
+            "role": "user",
+            "content": "Busca en internet la fecha actual y responde con la fecha en una sola línea citando brevemente la fuente.",
+            "attachments": [],
+            "timestamp": 1775320177193,
+            "id": "1775320177193-1"
+          },
+          {
+            "role": "assistant",
+            "content": "Hoy es 2026-04-04 (fuente: no aplica; no dispongo de acceso web en este entorno).",
+            "timestamp": 1775320177195,
+            "isStreaming": false,
+            "id": "1775320177195-2",
+            "routeInfo": "cloud • openai/gpt-5.4-nano"
+          },
+          {
+            "role": "user",
+            "content": "Busca en internet la fecha actual y responde con la fecha en una sola línea citando brevemente la fuente.",
+            "attachments": [],
+            "timestamp": 1775320233427,
+            "id": "1775320233427-1"
+          },
+          {
+            "role": "assistant",
+            "content": "Hoy es 2026-04-04 (fuente: fecha del sistema en este entorno).",
+            "timestamp": 1775320233429,
+            "isStreaming": false,
+            "id": "1775320233429-2",
+            "routeInfo": "cloud • openai/gpt-5.4-nano"
+          },
+          {
+            "role": "user",
+            "content": "Busca en internet la fecha actual y responde con la fecha en una sola línea citando brevemente la fuente.",
+            "attachments": [],
+            "timestamp": 1775320283539,
+            "id": "1775320283539-1"
+          },
+          {
+            "role": "assistant",
+            "content": "Hoy es 2026-04-04 (fuente: fecha del sistema en este entorno; no hay una fuente web explícita en el contexto provisto).",
+            "timestamp": 1775320283540,
+            "isStreaming": false,
+            "id": "1775320283540-2",
+            "routeInfo": "cloud • openai/gpt-5.4-nano"
+          },
+          {
+            "role": "user",
+            "content": "me encantan tus gustos, como los estás eligiendo, se parecen mucho a los míos",
+            "attachments": [],
+            "timestamp": 1775321180959,
+            "id": "1775321180959-1"
+          },
+          {
+            "role": "assistant",
+            "content": "¡Genial! Me encantaría escuchar tus ideas. ¿Qué te parece si compartimos cómo os gustan?",
+            "timestamp": 1775321180961,
+            "isStreaming": false,
+            "id": "1775321180961-3",
+            "routeInfo": "local • qwen2.5:0.5b"
+          },
+          {
+            "role": "user",
+            "content": "fecha actual hoy",
+            "attachments": [],
+            "timestamp": 1775321204087,
+            "id": "1775321204087-1"
+          },
+          {
+            "role": "assistant",
+            "content": "Hoy es 2026-04-04.",
+            "timestamp": 1775321204090,
+            "isStreaming": false,
+            "id": "1775321204090-2",
+            "routeInfo": "cloud • openai/gpt-5.4-nano"
+          },
+          {
+            "role": "user",
+            "content": "hola",
+            "attachments": [],
+            "timestamp": 1775321886372,
+            "id": "1775321886372-1"
+          },
+          {
+            "role": "assistant",
+            "content": "¡Hola! ¿Cómo estás tú? ¿Puedo ayudarte con algo hoy?",
+            "timestamp": 1775321886374,
+            "isStreaming": false,
+            "id": "1775321886374-2",
+            "routeInfo": "local • qwen2.5:0.5b"
+          },
+          {
+            "role": "user",
+            "content": "fecha actual hoy",
+            "attachments": [],
+            "timestamp": 1775321910977,
+            "id": "1775321910977-1"
+          },
+          {
+            "role": "assistant",
+            "content": "Hoy es 2026-04-04.",
+            "timestamp": 1775321910978,
+            "isStreaming": false,
+            "id": "1775321910978-2",
+            "routeInfo": "cloud • openai/gpt-5.4-nano"
+          }
+        ],
+        "createdAt": 1774480704114,
+        "updatedAt": 1775321913466,
+        "userMemory": [
+          {
+            "id": "1775321180961-2",
+            "key": "likes",
+            "value": "tus gustos, como los estás eligiendo, se parecen mucho a los míos",
+            "sourceMessageId": "1775321180959-1",
+            "updatedAt": 1775321180961
+          }
+        ]
+      }
+    ],
+    "activeId": "1774480704113-1"
+  },
+  "secrets": {
+    "hasMainKey": true,
+    "hasAp1Key": true,
+    "hasAp2Key": true,
+    "hasAp3Key": true
+  }
+}

@@ -219,8 +219,9 @@ export function prependWebContext(
 
   return [
     {
-      role: 'user',
+      role: 'system',
       content:
+        'Se proporciono contexto web reciente para esta respuesta. Utilizalo como evidencia externa cuando sea relevante. No digas que no tienes acceso a internet si ya hay contexto web adjunto; responde usando las fuentes proporcionadas y aclara limites solo si faltan datos.\n\n' +
         'Contexto web reciente (no siempre exacto, verificar si es crítico):\n\n' +
         blocks +
         '\n\nSi es útil, úsalo para responder mejor con citas breves de fuente.',

@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   maximize:      () => ipcRenderer.send('window:maximize'),
   close:         () => ipcRenderer.send('window:close'),
   getVersion:    () => ipcRenderer.invoke('app:version'),
+  getRuntimeMode: () => ipcRenderer.invoke('app:runtimeMode'),
   getSecret:     (key: string) => ipcRenderer.invoke('secret:get', key),
   setSecret:     (key: string, value: string) => ipcRenderer.invoke('secret:set', key, value),
   webSearch:     (query: string, maxResults?: number) => ipcRenderer.invoke('web:search', query, maxResults),

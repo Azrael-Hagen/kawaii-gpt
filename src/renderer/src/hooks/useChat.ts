@@ -10,11 +10,14 @@ import {
   providerSupportsImageGeneration,
 } from '@/services/cloudCatalog'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
-import { analyzeErrorMessage, appendErrorLog, createErrorLogEntry, getLearnedRepairRecommendation, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
+import { analyzeErrorMessage, appendErrorLog, createErrorLogEntry, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
 import { computeQuotaRetryMaxTokens, deriveTokenCapFromRecentErrors } from '@/services/chatResilience'
+import { addChatTraceEvent, finishChatTrace, startChatTrace, type ChatTraceStatus } from '@/services/chatTrace'
+import { estimateTokensFromChars } from '@/services/tokenBudget'
+import { computeChatRequestBudget } from '@/services/chatRequestBudget'
 import { getProviderApiKey, getSecretKey } from '@/utils/secureSettings'
 import { titleFromMessage } from '@/utils/formatters'
 import { buildSystemPrompt } from '@/utils/systemPrompt'
@@ -36,9 +39,9 @@ const LOCAL_CONFLICT_WINDOW_MS = 10 * 60_000
 const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
-const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 18_000
-const CHAT_TIMEOUT_MS = 60_000
-const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 14_000
+const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 24_000
+const CHAT_TIMEOUT_MS = 90_000
+const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 24_000
 const CLOUD_CONTEXT_BUDGET_CHARS = 28_000
 const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
 const CONTEXT_BUDGET_MAX_MESSAGES = 16
@@ -523,13 +526,14 @@ function computeAdaptiveProviderTimeoutMs(settings: Settings, baseUrl?: string):
 }
 
 function computeLocalAttemptTimeoutMs(settings: Settings, isSmartRoute: boolean): number {
-  let timeoutMs = isSmartRoute ? LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS : 28_000
+  let timeoutMs = isSmartRoute ? LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS : 36_000
   const rtt = getNetworkRttMs()
 
   if (rtt >= 300) timeoutMs += 2_000
   if (rtt >= 700) timeoutMs += 4_000
+  if (rtt >= 1_200) timeoutMs += 8_000
 
-  return Math.max(10_000, Math.min(35_000, timeoutMs))
+  return Math.max(16_000, Math.min(60_000, timeoutMs))
 }
 
 function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number): number {
@@ -545,22 +549,32 @@ function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number)
   return Math.max(CHAT_TIMEOUT_MS, Math.min(120_000, timeoutMs))
 }
 
-function computeAdaptiveMaxTokens(baseTokens: number, contextChars: number, settings: Settings, baseUrl?: string): number {
-  let next = baseTokens
+function computeAdaptiveMaxTokens(
+  baseTokens: number,
+  promptChars: number,
+  contextChars: number,
+  settings: Settings,
+  baseUrl?: string,
+): number {
   const providerLatency = getProviderLatencyMs(settings, baseUrl)
   const rtt = getNetworkRttMs()
+  return computeChatRequestBudget({
+    baseMaxTokens: baseTokens,
+    promptChars,
+    contextChars,
+    providerLatencyMs: providerLatency,
+    networkRttMs: rtt,
+  }).maxTokens
+}
 
-  if (contextChars >= 12_000) next = Math.min(next, 700)
-  if (contextChars >= 20_000) next = Math.min(next, 520)
-  if (contextChars >= 28_000) next = Math.min(next, 360)
-
-  if (providerLatency >= 1_200) next = Math.min(next, 560)
-  if (providerLatency >= 2_000) next = Math.min(next, 420)
-
-  if (rtt >= 700) next = Math.min(next, 560)
-  if (rtt >= 1_200) next = Math.min(next, 420)
-
-  return Math.max(120, next)
+function deniesWebAccess(content: string): boolean {
+  const lower = content.toLowerCase()
+  return (
+    lower.includes('no tengo acceso a internet') ||
+    lower.includes('no dispongo de acceso web') ||
+    lower.includes('no tengo acceso web') ||
+    lower.includes('i do not have access to the internet')
+  )
 }
 
 async function waitRotationJitter(signal: AbortSignal): Promise<void> {
@@ -713,6 +727,32 @@ function withRepairSuggestion(settings: Settings, message: string, provider: str
   return `${message} Sugerencia: ${suggestion}`
 }
 
+async function repairWebGroundedResponse(
+  client: OpenAICompatibleClient,
+  cfg: CloudCfg,
+  effectiveMessages: ChatMessageInput[],
+  sysPrompt: string,
+  temperature: number,
+  maxTokens: number,
+  draft?: string,
+): Promise<string> {
+  const repairedMessages: ChatMessageInput[] = [
+    ...effectiveMessages,
+    {
+      role: 'system',
+      content: 'Ya se te proporciono contexto web en los mensajes previos. Reescribe la respuesta usando ese contexto y sus fuentes. No afirmes que no tienes acceso a internet ni a la web; limita tu respuesta a la evidencia proporcionada y menciona al menos una fuente breve cuando aplique.',
+    },
+    ...(draft
+      ? [{
+          role: 'assistant' as const,
+          content: draft,
+        }]
+      : []),
+  ]
+
+  return client.chat(cfg.model, repairedMessages, sysPrompt, temperature, maxTokens)
+}
+
 function resolveProvider(
   modelName: string,
   models: AIModel[],
@@ -835,11 +875,23 @@ export function useChat(models: AIModel[] = []) {
     const text = content.trim()
     if ((!text && attachments.length === 0) || isLoading) return
 
+    const model = settings.defaultModel || settings.legacyModel || settings.cloudModel || settings.localModel || models[0]?.name || 'auto-smart'
+    const traceId = startChatTrace({
+      providerMode: settings.provider,
+      model,
+      promptChars: text.length,
+      attachmentCount: attachments.length,
+    })
+    let traceStatus: ChatTraceStatus = 'failed'
+    let traceFinishAttrs: Record<string, unknown> = {}
+    addChatTraceEvent(traceId, 'chat_send_start', { providerMode: settings.provider, stream: settings.streamResponses })
+
     setError(null)
 
-    const model = settings.defaultModel || settings.legacyModel || settings.cloudModel || settings.localModel || models[0]?.name || 'auto-smart'
     if (!model && settings.provider !== 'smart') {
       setError('Sin modelo seleccionado. Abre Ajustes ⚙️ y añade una API key.')
+      traceFinishAttrs = { reason: 'missing-model' }
+      finishChatTrace(traceId, 'failed', traceFinishAttrs)
       return
     }
 
@@ -878,6 +930,7 @@ export function useChat(models: AIModel[] = []) {
     const timeoutHandle = window.setTimeout(() => {
       timeoutTriggered = true
       abortRef.current?.abort(new DOMException('Chat timeout', 'AbortError'))
+      addChatTraceEvent(traceId, 'global_timeout', { timeoutMs: adaptiveChatTimeoutMs })
       if (enableDiag) {
         diagLog(`Timeout global alcanzado (${Math.round(adaptiveChatTimeoutMs / 1000)}s): se abortó la operación activa de chat.`)
       }
@@ -908,6 +961,12 @@ export function useChat(models: AIModel[] = []) {
         }
 
         decision = selectRoute(routingSettings, routePrompt)
+        addChatTraceEvent(traceId, 'route_decision', {
+          target: decision.target,
+          useWebSearch: decision.useWebSearch,
+          maxTokens: decision.maxTokens,
+          temperature: decision.temperature,
+        })
         sysPrompt = buildSystemPrompt(settings.systemPrompt, settings.characterProfile)
         const builtCloudQueue = await buildCloudQueue(settings, models, apiKey, model, routePrompt, decision.maxTokens)
         const healthyQueue = await filterHealthyCloudProviders(builtCloudQueue)
@@ -1075,6 +1134,7 @@ export function useChat(models: AIModel[] = []) {
       apiMessages,
       currentConversation?.userMemory ?? [],
     )
+    let webResultsCount = 0
 
     const shouldAttachCharacterImage = apiMessages.filter(message => message.role === 'user').length <= 1
     const characterContext = buildCharacterContextMessage(settings.characterProfile, shouldAttachCharacterImage)
@@ -1084,8 +1144,17 @@ export function useChat(models: AIModel[] = []) {
     if (decision.useWebSearch) {
       try {
         const web = await searchWeb(text, settings.webSearchMaxResults)
+        webResultsCount = web.length
+        addChatTraceEvent(traceId, web.length > 0 ? 'web_search_success' : 'web_search_empty', {
+          queryChars: text.length,
+          results: web.length,
+        })
         effectiveMessages = prependWebContext(effectiveMessages, web)
-      } catch { /* continue without web context */ }
+      } catch (webErr) {
+        addChatTraceEvent(traceId, 'web_search_error', {
+          reason: summarizeProviderError(webErr),
+        })
+      }
     }
 
     const contextBudget = target === 'local' ? LOCAL_CONTEXT_BUDGET_CHARS : CLOUD_CONTEXT_BUDGET_CHARS
@@ -1094,6 +1163,18 @@ export function useChat(models: AIModel[] = []) {
     effectiveMessages = trimMessagesForBudget(effectiveMessages, contextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
     const afterTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
     const effectiveContextChars = afterTrimChars
+      const estimatedPromptTokens = estimateTokensFromChars(text.length)
+      const estimatedContextTokens = estimateTokensFromChars(effectiveContextChars)
+      addChatTraceEvent(traceId, 'context_budget', {
+        target,
+        beforeMessages: beforeTrimMessages,
+        beforeChars: beforeTrimChars,
+        afterMessages: effectiveMessages.length,
+        afterChars: afterTrimChars,
+        promptChars: text.length,
+        promptTokens: estimatedPromptTokens,
+        contextTokens: estimatedContextTokens,
+      })
     if (enableDiag && (beforeTrimMessages !== effectiveMessages.length || beforeTrimChars !== afterTrimChars)) {
       diagLog(`Contexto recortado: ${beforeTrimMessages} mensajes (${beforeTrimChars} chars aprox) -> ${effectiveMessages.length} mensajes (${afterTrimChars} chars aprox).`)
     }
@@ -1101,6 +1182,8 @@ export function useChat(models: AIModel[] = []) {
     // ── Legacy engine mode ────────────────────────────────────────────────────
     if (settings.provider === 'legacy-engine' || target === 'legacy') {
       const legacyModel = stripPrefix(settings.legacyModel || model || 'legacy-default')
+      const legacyStartedAt = Date.now()
+      addChatTraceEvent(traceId, 'legacy_attempt_start', { model: legacyModel })
       try {
         const legacyClient = await ensureLegacyClient(settings, apiKey)
           if (settings.streamResponses) {
@@ -1123,7 +1206,15 @@ export function useChat(models: AIModel[] = []) {
           )
           updateMessage(convId!, assistantId, r, false, undefined, `kawaii • ${legacyModel}`)
         }
+        addChatTraceEvent(traceId, 'legacy_attempt_success', { elapsedMs: Date.now() - legacyStartedAt, model: legacyModel })
+        traceStatus = 'success'
+        traceFinishAttrs = { finalRoute: 'legacy', model: legacyModel }
       } catch (err) {
+        addChatTraceEvent(traceId, 'legacy_attempt_error', {
+          elapsedMs: Date.now() - legacyStartedAt,
+          code: extractStatusCode(String(err instanceof Error ? err.message : err)) ?? null,
+          reason: summarizeProviderError(err),
+        })
         if ((err as Error).name === 'AbortError') {
           if (timeoutTriggered) {
             const timeoutMessage = `⏰ Timeout: la operación de chat superó el límite de ${Math.round(adaptiveChatTimeoutMs / 1000)}s.`
@@ -1173,6 +1264,8 @@ export function useChat(models: AIModel[] = []) {
               updateMessage(convId!, assistantId, r, false, undefined, `local (fallback) • ${localModel}`)
               logError(msg, { provider: settings.localBaseUrl, route: 'legacy->local', autoRepairApplied: true })
             }
+            traceStatus = 'success'
+            traceFinishAttrs = { finalRoute: 'legacy->local', model: localModel }
           } catch (fbErr) {
             const fbMsg = summarizeProviderError(fbErr)
             logError(fbMsg, { provider: settings.localBaseUrl, route: 'legacy->local' })
@@ -1197,6 +1290,8 @@ export function useChat(models: AIModel[] = []) {
     if (target === 'local') {
       const localModel = resolveLocalModelName(settings, models) || stripPrefix(settings.localModel || model)
       const localClient = new OllamaClient(settings.localBaseUrl)
+      const localStartedAt = Date.now()
+      addChatTraceEvent(traceId, 'local_attempt_start', { model: localModel })
       const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(useSettingsStore.getState().settings, settings.provider === 'smart')
       const localAttempt = createProviderAttemptAbort(abortRef.current!.signal, localAttemptTimeoutMs)
       let localFailed = false
@@ -1225,9 +1320,17 @@ export function useChat(models: AIModel[] = []) {
           )
           updateMessage(convId!, assistantId, r, false, undefined, `local • ${localModel}`)
         }
+        addChatTraceEvent(traceId, 'local_attempt_success', { elapsedMs: Date.now() - localStartedAt, model: localModel })
+        traceStatus = 'success'
+        traceFinishAttrs = { finalRoute: 'local', model: localModel }
         setIsLoading(false)
         return
       } catch (err) {
+        addChatTraceEvent(traceId, 'local_attempt_error', {
+          elapsedMs: Date.now() - localStartedAt,
+          code: extractStatusCode(String(err instanceof Error ? err.message : err)) ?? null,
+          reason: summarizeProviderError(err),
+        })
         const localProviderTimedOut = localAttempt.wasTimedOut()
         if ((err as Error).name === 'AbortError') {
           if (timeoutTriggered) {
@@ -1272,7 +1375,13 @@ export function useChat(models: AIModel[] = []) {
             const cfg = cloudQueue[idx]
             const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
             const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
-            let providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+            let providerMaxTokens = computeAdaptiveMaxTokens(
+              cfg.maxTokens,
+              text.length,
+              effectiveContextChars,
+              useSettingsStore.getState().settings,
+              cfg.baseUrl,
+            )
             const learnedCap = deriveTokenCapFromRecentErrors(
               useSettingsStore.getState().settings.errorLogs,
               [cfg.baseUrl, cfg.label, cfg.model],
@@ -1281,6 +1390,17 @@ export function useChat(models: AIModel[] = []) {
               providerMaxTokens = Math.max(120, Math.min(providerMaxTokens, learnedCap))
             }
             const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
+            addChatTraceEvent(traceId, 'cloud_attempt_start', {
+              provider: cfg.label,
+              idx: idx + 1,
+              total: cloudQueue.length,
+              maxTokens: providerMaxTokens,
+              promptTokens: estimateTokensFromChars(text.length),
+              contextTokens: estimateTokensFromChars(effectiveContextChars),
+              timeoutMs: providerTimeoutMs,
+              phase: 'local->cloud',
+            })
+            const cloudAttemptStartedAt = Date.now()
             try {
               if (settings.streamResponses) {
                 let acc = ''
@@ -1307,10 +1427,24 @@ export function useChat(models: AIModel[] = []) {
                 updateMessage(convId!, assistantId, r, false, undefined, cfg.label)
               }
               updateSettings({ cloudDiagnostics: null })
+              addChatTraceEvent(traceId, 'cloud_attempt_success', {
+                provider: cfg.label,
+                elapsedMs: Date.now() - cloudAttemptStartedAt,
+                phase: 'local->cloud',
+              })
+              traceStatus = 'success'
+              traceFinishAttrs = { finalRoute: 'local->cloud', provider: cfg.label }
               setIsLoading(false)
               return
             } catch (cloudErr) {
               const errMsg = summarizeProviderError(cloudErr)
+              addChatTraceEvent(traceId, 'cloud_attempt_error', {
+                provider: cfg.label,
+                elapsedMs: Date.now() - cloudAttemptStartedAt,
+                code: extractStatusCode(errMsg) ?? null,
+                reason: errMsg,
+                phase: 'local->cloud',
+              })
               logError(errMsg, { provider: cfg.label, route: 'local->cloud', autoRepairApplied: true })
               updateSettings({
                 cloudDiagnostics: {
@@ -1419,7 +1553,13 @@ export function useChat(models: AIModel[] = []) {
       const cfg = cloudQueue[idx]
       const cloudClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
       const providerTimeoutMs = computeAdaptiveProviderTimeoutMs(useSettingsStore.getState().settings, cfg.baseUrl)
-      let providerMaxTokens = computeAdaptiveMaxTokens(cfg.maxTokens, effectiveContextChars, useSettingsStore.getState().settings, cfg.baseUrl)
+      let providerMaxTokens = computeAdaptiveMaxTokens(
+        cfg.maxTokens,
+        text.length,
+        effectiveContextChars,
+        useSettingsStore.getState().settings,
+        cfg.baseUrl,
+      )
       const learnedCap = deriveTokenCapFromRecentErrors(
         useSettingsStore.getState().settings.errorLogs,
         [cfg.baseUrl, cfg.label, cfg.model],
@@ -1428,6 +1568,17 @@ export function useChat(models: AIModel[] = []) {
         providerMaxTokens = Math.max(120, Math.min(providerMaxTokens, learnedCap))
       }
       const providerAttempt = createProviderAttemptAbort(abortRef.current!.signal, providerTimeoutMs)
+      addChatTraceEvent(traceId, 'cloud_attempt_start', {
+        provider: cfg.label,
+        idx: idx + 1,
+        total: cloudQueue.length,
+        maxTokens: providerMaxTokens,
+        promptTokens: estimateTokensFromChars(text.length),
+        contextTokens: estimateTokensFromChars(effectiveContextChars),
+        timeoutMs: providerTimeoutMs,
+        phase: 'cloud',
+      })
+      const cloudAttemptStartedAt = Date.now()
 
       try {
         if (settings.streamResponses) {
@@ -1443,6 +1594,20 @@ export function useChat(models: AIModel[] = []) {
             streamUi.push(acc, chunk)
           }
           streamUi.flush(acc)
+          if (decision.useWebSearch && webResultsCount > 0 && deniesWebAccess(acc)) {
+            addChatTraceEvent(traceId, 'web_response_repair_start', { provider: cfg.label, results: webResultsCount })
+            const repaired = await repairWebGroundedResponse(
+              cloudClient,
+              cfg,
+              effectiveMessages,
+              sysPrompt,
+              decision.temperature,
+              providerMaxTokens,
+              acc,
+            )
+            acc = repaired
+            addChatTraceEvent(traceId, 'web_response_repair_success', { provider: cfg.label })
+          }
           if (isLikelyPolicyRefusal(acc) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
           }
@@ -1455,12 +1620,33 @@ export function useChat(models: AIModel[] = []) {
             providerAttempt.signal,
             providerTimeoutMs,
           )
-          if (isLikelyPolicyRefusal(r) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
+          let responseText = r
+          if (decision.useWebSearch && webResultsCount > 0 && deniesWebAccess(responseText)) {
+            addChatTraceEvent(traceId, 'web_response_repair_start', { provider: cfg.label, results: webResultsCount })
+            responseText = await repairWebGroundedResponse(
+              cloudClient,
+              cfg,
+              effectiveMessages,
+              sysPrompt,
+              decision.temperature,
+              providerMaxTokens,
+              responseText,
+            )
+            addChatTraceEvent(traceId, 'web_response_repair_success', { provider: cfg.label })
+          }
+          if (isLikelyPolicyRefusal(responseText) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
           }
-          updateMessage(convId!, assistantId, r, false, undefined, cfg.label)
+          updateMessage(convId!, assistantId, responseText, false, undefined, cfg.label)
         }
         updateSettings({ cloudDiagnostics: null })
+        addChatTraceEvent(traceId, 'cloud_attempt_success', {
+          provider: cfg.label,
+          elapsedMs: Date.now() - cloudAttemptStartedAt,
+          phase: 'cloud',
+        })
+        traceStatus = 'success'
+        traceFinishAttrs = { finalRoute: 'cloud', provider: cfg.label }
         setIsLoading(false)
         return // ✓ success
 
@@ -1532,6 +1718,8 @@ export function useChat(models: AIModel[] = []) {
                 updateMessage(convId!, assistantId, r, false, undefined, `local (fallback-timeout) • ${localModel}`)
               }
               logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
+              traceStatus = 'success'
+              traceFinishAttrs = { finalRoute: 'cloud->local-timeout', model: localModel }
               setIsLoading(false)
               return
             } catch (fbErr) {
@@ -1551,6 +1739,13 @@ export function useChat(models: AIModel[] = []) {
         }
 
         let errMsg = summarizeProviderError(err)
+        addChatTraceEvent(traceId, 'cloud_attempt_error', {
+          provider: cfg.label,
+          elapsedMs: Date.now() - cloudAttemptStartedAt,
+          code: extractStatusCode(errMsg) ?? null,
+          reason: errMsg,
+          phase: 'cloud',
+        })
 
         if (isQuotaError(err)) {
           const retryMaxTokens = computeQuotaRetryMaxTokens(providerMaxTokens, errMsg)
@@ -1588,10 +1783,22 @@ export function useChat(models: AIModel[] = []) {
                 updateMessage(convId!, assistantId, retried, false, undefined, `${cfg.label} • auto-token-cap`)
               }
               updateSettings({ cloudDiagnostics: null })
+              addChatTraceEvent(traceId, 'quota_retry_success', {
+                provider: cfg.label,
+                retryMaxTokens,
+              })
+              traceStatus = 'success'
+              traceFinishAttrs = { finalRoute: 'cloud', provider: cfg.label, autoTokenCap: retryMaxTokens }
               setIsLoading(false)
               return
             } catch (retryErr) {
               errMsg = summarizeProviderError(retryErr)
+              addChatTraceEvent(traceId, 'quota_retry_error', {
+                provider: cfg.label,
+                retryMaxTokens,
+                code: extractStatusCode(errMsg) ?? null,
+                reason: errMsg,
+              })
               logError(
                 `Reintento auto-token-cap fallo (${retryMaxTokens}): ${errMsg}`,
                 { provider: cfg.label, route: 'cloud' },
@@ -1602,10 +1809,6 @@ export function useChat(models: AIModel[] = []) {
           }
         }
 
-        const learnedRepair = getLearnedRepairRecommendation(useSettingsStore.getState().settings, errMsg, {
-          provider: cfg.label,
-          route: 'cloud',
-        })
         logError(errMsg, { provider: cfg.label, route: 'cloud' })
         updateSettings({
           cloudDiagnostics: {
@@ -1636,44 +1839,6 @@ export function useChat(models: AIModel[] = []) {
         }
 
         // All cloud providers exhausted or non-quota error → kawaii/local auto-failover
-        const shouldPreferLegacy = learnedRepair.suggestion === 'switch_to_legacy' && (learnedRepair.confidence ?? 0) >= 0.6
-        const shouldPreferLocal = learnedRepair.suggestion === 'switch_to_local' && (learnedRepair.confidence ?? 0) >= 0.6
-
-        const learnedLocalModel = resolveLocalModelName(settings, models)
-        if (shouldPreferLocal && settings.autoFailover && learnedLocalModel && !avoidLocalFallback) {
-          const localModel = learnedLocalModel
-          const localClient = new OllamaClient(settings.localBaseUrl)
-          updateMessage(convId!, assistantId, `⚡ Aprendizaje local sugiere fallback directo a modelo local (${Math.round((learnedRepair.confidence ?? 0) * 100)}%)...`, true)
-          try {
-            if (settings.streamResponses) {
-              let acc = ''
-              const streamUi = createStreamUpdateController((partial) => {
-                updateMessage(convId!, assistantId, partial, true)
-              })
-              for await (const chunk of localClient.streamChat(
-                localModel, effectiveMessages, sysPrompt,
-                decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
-              )) {
-                acc += chunk
-                streamUi.push(acc, chunk)
-              }
-              streamUi.flush(acc)
-              updateMessage(convId!, assistantId, acc, false, undefined, `local (learned fallback) • ${localModel}`)
-            } else {
-              const r = await localClient.chat(
-                localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
-              )
-              updateMessage(convId!, assistantId, r, false, undefined, `local (learned fallback) • ${localModel}`)
-            }
-            logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
-            setIsLoading(false)
-            return
-          } catch (learnedLocalErr) {
-            const learnedLocalMsg = summarizeProviderError(learnedLocalErr)
-            logError(learnedLocalMsg, { provider: settings.localBaseUrl, route: 'cloud->local' })
-          }
-        }
-
         // In Smart mode, never fall back to legacy engine if cloud fails
 
         const fallbackLocalModel = resolveLocalModelName(settings, models)
@@ -1704,6 +1869,8 @@ export function useChat(models: AIModel[] = []) {
               updateMessage(convId!, assistantId, r, false, undefined, `local (fallback) • ${localModel}`)
               logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
             }
+            traceStatus = 'success'
+            traceFinishAttrs = { finalRoute: 'cloud->local', model: localModel }
           } catch (fbErr) {
             const fbMsg = summarizeProviderError(fbErr)
             logError(fbMsg, { provider: settings.localBaseUrl, route: 'cloud->local' })
@@ -1742,6 +1909,10 @@ export function useChat(models: AIModel[] = []) {
       setIsLoading(false)
     } finally {
       window.clearTimeout(timeoutHandle)
+      if (timeoutTriggered && traceStatus !== 'success') {
+        traceStatus = 'aborted'
+      }
+      finishChatTrace(traceId, traceStatus, traceFinishAttrs)
       if (enableDiag) {
         diagLog('Chat finalizado.')
         endDiagnostic()

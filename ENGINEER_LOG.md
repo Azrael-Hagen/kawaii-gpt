@@ -388,3 +388,22 @@
 **Next steps**:
 - Add a focused E2E that validates at least one full send/response chat roundtrip in mock mode
 - Add lint gate for `no-use-before-define` in hooks to prevent TDZ regressions
+
+## [CP-19] 2026-04-04
+**Status**: Passed
+**Decisions made**:
+- Added a dedicated non-UI chat tracing module (`chatTrace`) with structured events and bounded retention to debug route/provider failures with timing context
+- Instrumented `useChat` at communication-critical boundaries (route decision, context trim, local/legacy/cloud attempts, quota retry, timeout) instead of relying on coarse text logs
+- Removed diagnostic knowledge panels that were not providing actionable runtime recovery value
+
+**Trade-offs**:
+- Trace data remains local and in-memory for low overhead; it is not a full external telemetry pipeline
+- Knowledge models are still retained in settings for compatibility, but no longer shown as primary diagnostics UX
+
+**Debt deferred**:
+- Add optional trace export-to-file for postmortem sharing
+- Add E2E scenario that asserts trace event sequence under forced provider failures
+
+**Next steps**:
+- Add a tiny scriptable command in diagnostics to snapshot traces plus latest error logs in one artifact
+- Track p50/p95 first-token latency from trace events for release gating

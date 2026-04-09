@@ -3,6 +3,8 @@ import { join } from 'path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import Store from 'electron-store'
 
+let mainWindowRef: BrowserWindow | null = null
+
 const store = new Store<{ windowBounds: Electron.Rectangle }>()
 const secureStore = new Store<Record<string, string>>({ name: 'secure-settings' })
 
@@ -15,6 +17,8 @@ type LegacyRuntimeStatus = {
 
 let legacyProcess: ChildProcessWithoutNullStreams | null = null
 let legacyStatus: LegacyRuntimeStatus = { running: false }
+
+type WebSearchResult = { title: string; snippet: string; url: string }
 
 function splitArgs(raw: string): string[] {
   return raw
@@ -32,6 +36,102 @@ function isTrustedAppOrigin(origin?: string): boolean {
     value.startsWith('https://localhost:') ||
     value.startsWith('https://127.0.0.1:')
   )
+}
+
+function decodeHtmlEntities(input: string): string {
+  return input
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#x2F;/gi, '/')
+}
+
+function stripHtml(input: string): string {
+  return decodeHtmlEntities(input.replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim()
+}
+
+function extractDuckDuckGoTargetUrl(rawUrl: string): string {
+  const decoded = decodeHtmlEntities(rawUrl)
+  const normalized = decoded.startsWith('//') ? `https:${decoded}` : decoded
+
+  try {
+    const url = new URL(normalized)
+    const direct = url.searchParams.get('uddg')
+    return direct ? decodeURIComponent(direct) : normalized
+  } catch {
+    return normalized
+  }
+}
+
+function parseDuckDuckGoHtmlResults(html: string, maxResults: number): WebSearchResult[] {
+  const results: WebSearchResult[] = []
+  const blocks = html.split('<div class="links_main links_deep result__body">')
+
+  for (const block of blocks.slice(1)) {
+    const titleMatch = block.match(/class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>/i)
+    if (!titleMatch) continue
+
+    const snippetMatch = block.match(/class="result__snippet"[^>]*>([\s\S]*?)<\/a>/i)
+    const title = stripHtml(titleMatch[2])
+    const snippet = stripHtml(snippetMatch?.[1] ?? '')
+    const url = extractDuckDuckGoTargetUrl(titleMatch[1])
+
+    if (!title || !url) continue
+    results.push({ title, snippet, url })
+    if (results.length >= maxResults) break
+  }
+
+  return results
+}
+
+async function searchDuckDuckGoInstant(query: string, maxResults: number): Promise<WebSearchResult[]> {
+  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`Web search failed (${res.status})`)
+
+  const data = await res.json() as {
+    AbstractText?: string
+    AbstractURL?: string
+    Heading?: string
+    RelatedTopics?: Array<{ Text?: string; FirstURL?: string } | { Topics?: Array<{ Text?: string; FirstURL?: string }> }>
+  }
+
+  const flat: WebSearchResult[] = []
+  if (data.AbstractText) {
+    flat.push({
+      title: data.Heading || 'Result',
+      snippet: data.AbstractText,
+      url: data.AbstractURL || '',
+    })
+  }
+
+  for (const item of data.RelatedTopics ?? []) {
+    if ('Topics' in item && Array.isArray(item.Topics)) {
+      for (const sub of item.Topics) {
+        if (sub.Text) flat.push({ title: 'Related', snippet: sub.Text, url: sub.FirstURL || '' })
+      }
+    } else if ('Text' in item && item.Text) {
+      flat.push({ title: 'Related', snippet: item.Text, url: item.FirstURL || '' })
+    }
+  }
+
+  return flat
+    .filter(item => item.title && item.url)
+    .slice(0, Math.max(1, Math.min(maxResults, 10)))
+}
+
+async function searchDuckDuckGoHtml(query: string, maxResults: number): Promise<WebSearchResult[]> {
+  const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36',
+    },
+  })
+  if (!res.ok) throw new Error(`Web HTML search failed (${res.status})`)
+  const html = await res.text()
+  return parseDuckDuckGoHtmlResults(html, Math.max(1, Math.min(maxResults, 10)))
 }
 
 function createWindow(): void {
@@ -58,6 +158,13 @@ function createWindow(): void {
       nodeIntegration:  false,
       sandbox:          false,
     },
+  })
+  mainWindowRef = mainWindow
+
+  mainWindow.on('closed', () => {
+    if (mainWindowRef === mainWindow) {
+      mainWindowRef = null
+    }
   })
 
   // Save window position/size on resize/move
@@ -107,6 +214,7 @@ ipcMain.on('window:maximize', (e) => {
 })
 ipcMain.on('window:close', (e) => BrowserWindow.fromWebContents(e.sender)?.close())
 ipcMain.handle('app:version', () => app.getVersion())
+ipcMain.handle('app:runtimeMode', () => (app.isPackaged ? 'packaged' : 'dev'))
 ipcMain.handle('secret:get', (_e, key: string) => secureStore.get(key, ''))
 ipcMain.handle('secret:set', (_e, key: string, value: string) => {
   secureStore.set(key, value)
@@ -115,40 +223,10 @@ ipcMain.handle('shell:openExternal', (_e, url: string) => shell.openExternal(url
 ipcMain.handle('web:search', async (_e, query: string, maxResults = 5) => {
   const q = query.trim()
   if (!q) return []
-
-  const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(q)}&format=json&no_html=1&skip_disambig=1`
-  const res = await fetch(url)
-  if (!res.ok) throw new Error(`Web search failed (${res.status})`)
-
-  const data = await res.json() as {
-    AbstractText?: string
-    AbstractURL?: string
-    Heading?: string
-    RelatedTopics?: Array<{ Text?: string; FirstURL?: string } | { Topics?: Array<{ Text?: string; FirstURL?: string }> }>
-  }
-
-  const flat: Array<{ title: string; snippet: string; url: string }> = []
-  if (data.AbstractText) {
-    flat.push({
-      title: data.Heading || 'Result',
-      snippet: data.AbstractText,
-      url: data.AbstractURL || '',
-    })
-  }
-
-  for (const item of data.RelatedTopics ?? []) {
-    if ('Topics' in item && Array.isArray(item.Topics)) {
-      for (const sub of item.Topics) {
-        if (sub.Text) {
-          flat.push({ title: 'Related', snippet: sub.Text, url: sub.FirstURL || '' })
-        }
-      }
-    } else if ('Text' in item && item.Text) {
-      flat.push({ title: 'Related', snippet: item.Text, url: item.FirstURL || '' })
-    }
-  }
-
-  return flat.slice(0, Math.max(1, Math.min(maxResults, 10)))
+  const safeMaxResults = Math.max(1, Math.min(maxResults, 10))
+  const instant = await searchDuckDuckGoInstant(q, safeMaxResults)
+  if (instant.length > 0) return instant
+  return searchDuckDuckGoHtml(q, safeMaxResults)
 })
 
 ipcMain.handle('legacy:status', () => legacyStatus)
@@ -227,12 +305,23 @@ ipcMain.handle('legacy:stop', async () => {
 
 // ── App lifecycle ─────────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
-  createWindow()
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+const hasSingleInstanceLock = app.requestSingleInstanceLock()
+if (!hasSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!mainWindowRef) return
+    if (mainWindowRef.isMinimized()) mainWindowRef.restore()
+    mainWindowRef.focus()
   })
-})
+
+  app.whenReady().then(() => {
+    createWindow()
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    })
+  })
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()

@@ -43,4 +43,35 @@ test.describe('KawaiiGPT UI', () => {
 
     await expect(page.getByRole('main').getByText(prompt)).toBeVisible()
   })
+
+  test('exposes chat trace debug helpers and records a trace after send', async ({ page }) => {
+    await page.goto('/')
+    await completeOrSkipSetup(page)
+
+    await page.evaluate(() => {
+      ;(window as any).__kawaiiChatDebug?.clearTraces?.()
+    })
+
+    const prompt = 'prueba de trazas e2e'
+    const input = page.getByPlaceholder('Escríbeme algo...')
+    await input.fill(prompt)
+    await input.press('Enter')
+
+    await expect(page.getByRole('main').getByText(prompt)).toBeVisible()
+
+    await page.waitForFunction(() => {
+      const api = (window as any).__kawaiiChatDebug
+      if (!api?.getRecentTraces) return false
+      const traces = api.getRecentTraces(5)
+      return Array.isArray(traces) && traces.length > 0 && traces[0]?.events?.length > 0
+    })
+
+    const traceSummary = await page.evaluate(() => {
+      const api = (window as any).__kawaiiChatDebug
+      return api.getRecentTraceSummaries(1)[0]
+    })
+
+    expect(traceSummary).toContain('trace=')
+    expect(traceSummary).toContain('chat_send_start')
+  })
 })

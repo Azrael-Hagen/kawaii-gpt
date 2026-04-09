@@ -1,0 +1,6 @@
+2026/04/04-11:00:10.505 5cd0 Reusing MANIFEST C:\Users\Azrael\AppData\Roaming\kawaii-gpt\Local Storage\leveldb/MANIFEST-000001
+2026/04/04-11:00:10.514 5cd0 Recovering log #537
+2026/04/04-11:00:10.515 5cd0 Reusing old log C:\Users\Azrael\AppData\Roaming\kawaii-gpt\Local Storage\leveldb/000537.log 
+2026/04/04-11:03:22.771 313c Level-0 table #540: started
+2026/04/04-11:03:22.849 313c Level-0 table #540: 3935542 bytes OK
+2026/04/04-11:03:22.854 313c Delete type=0 #537
