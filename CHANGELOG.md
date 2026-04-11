@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.25] - 2026-04-11
+### Changed
+- Provider attempt timeouts are now progress-aware during streaming, so active responses no longer expire just because the total generation lasts longer than the original timeout window
+- Smart local recovery now retries once with compacted context before escalating to cloud when the learned action suggests `reduce_load_or_retry`
+
+### Fixed
+- Resolved recurrent visible `Timeout local tras ...` failures on follow-up turns where Ollama was still streaming useful output
+- Prevented premature fallback escalation on long-but-active local responses by resetting per-attempt timeout on each chunk
+
 ## [0.4.24] - 2026-04-11
 ### Added
 - Provider configuration transfer tests covering export/import normalization and runtime metadata preservation

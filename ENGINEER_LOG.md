@@ -1,5 +1,20 @@
 # Engineer Log
 
+## [CP-17.1] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Switched per-provider streaming timeouts from fixed-wall-clock to progress-aware idle timers so long active generations are not aborted mid-response
+- Added a compact local retry path before cloud fallback when learned timeout history indicates `reduce_load_or_retry`
+
+**Trade-offs**:
+- A stalled stream can now stay alive longer if it keeps dribbling tiny chunks, but that is preferable to cutting off legitimate long answers mid-flight
+
+**Debt deferred**:
+- Cloud fallback still starts after one local recovery attempt; a richer multi-step continuation strategy could later merge partial local text with cloud continuation more elegantly
+
+**Next steps**:
+- Observe real user sessions for any remaining timeout cases and tune idle timeout thresholds only with trace evidence
+
 ## [CP-17] 2026-04-11
 **Status**: Passed
 **Decisions made**:

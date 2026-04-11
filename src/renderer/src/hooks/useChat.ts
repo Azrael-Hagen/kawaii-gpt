@@ -57,6 +57,9 @@ const SMART_MAX_CLOUD_ATTEMPTS = 2
 const MANUAL_CLOUD_MAX_ATTEMPTS = 3
 const DEFAULT_CONSERVATIVE_CLOUD_PROMPT_LIMIT = 2_400
 const DEFAULT_OPENROUTER_FREE_PROMPT_LIMIT = 1_900
+const LOCAL_RECOVERY_CONTEXT_BUDGET_CHARS = 2_400
+const LOCAL_RECOVERY_MAX_MESSAGES = 8
+const LOCAL_RECOVERY_MIN_TIMEOUT_MS = 18_000
 
 /**
  * Session-level blacklist for providers with fatal errors (auth/quota/model).
@@ -277,6 +280,24 @@ function buildCompactedHistoryMessage(messages: ChatMessageInput[], availableCha
   }
 }
 
+function buildLocalRecoveryMessages(messages: ChatMessageInput[], partialContent: string): ChatMessageInput[] {
+  const compacted = trimMessagesForBudget(messages, LOCAL_RECOVERY_CONTEXT_BUDGET_CHARS, LOCAL_RECOVERY_MAX_MESSAGES)
+  const partial = partialContent.trim()
+  if (!partial) {
+    return compacted
+  }
+
+  const tail = partial.length > 900 ? partial.slice(-900) : partial
+  return trimMessagesForBudget([
+    ...compacted,
+    { role: 'assistant', content: tail },
+    {
+      role: 'user',
+      content: 'Continua exactamente la ultima respuesta desde donde quedo, sin reiniciar ni repetir lo ya dicho. Prioriza cerrar la idea pendiente.',
+    },
+  ], LOCAL_RECOVERY_CONTEXT_BUDGET_CHARS, LOCAL_RECOVERY_MAX_MESSAGES)
+}
+
 function summarizeProviderError(err: unknown): string {
   const msg = err instanceof Error ? err.message : String(err)
   const compact = msg.replace(/\s+/g, ' ').trim()
@@ -375,15 +396,22 @@ function createStreamUpdateController(onPartial: (text: string) => void): {
 function createProviderAttemptAbort(baseSignal: AbortSignal, timeoutMs: number): {
   signal: AbortSignal
   wasTimedOut: () => boolean
+  touch: () => void
   clear: () => void
 } {
   const controller = new AbortController()
   let timedOut = false
+  let timeoutId = 0
 
-  const timeoutId = window.setTimeout(() => {
-    timedOut = true
-    controller.abort(new DOMException('Provider timeout', 'AbortError'))
-  }, timeoutMs)
+  const armTimeout = () => {
+    window.clearTimeout(timeoutId)
+    timeoutId = window.setTimeout(() => {
+      timedOut = true
+      controller.abort(new DOMException('Provider timeout', 'AbortError'))
+    }, timeoutMs)
+  }
+
+  armTimeout()
 
   const onBaseAbort = () => {
     controller.abort(baseSignal.reason)
@@ -394,6 +422,10 @@ function createProviderAttemptAbort(baseSignal: AbortSignal, timeoutMs: number):
   return {
     signal: controller.signal,
     wasTimedOut: () => timedOut,
+    touch: () => {
+      if (controller.signal.aborted) return
+      armTimeout()
+    },
     clear: () => {
       window.clearTimeout(timeoutId)
       baseSignal.removeEventListener('abort', onBaseAbort)
@@ -1492,6 +1524,7 @@ export function useChat(models: AIModel[] = []) {
             localModel, effectiveMessages, sysPrompt,
             decision.temperature, settings.localMaxTokens, localAttempt.signal,
           )) {
+            if (chunk) localAttempt.touch()
             acc += chunk
             streamUi.push(acc, chunk)
           }
@@ -1532,6 +1565,69 @@ export function useChat(models: AIModel[] = []) {
 
           if (localProviderTimedOut && settings.provider === 'smart') {
             const localTimeoutMsg = `Timeout local tras ${Math.round(localAttemptTimeoutMs / 1000)}s sin respuesta útil.`
+            const partial = useChatStore.getState()
+              .conversations.find(c => c.id === convId)
+              ?.messages.find(m => m.id === assistantId)?.content ?? ''
+            const learnedAction = analyzeErrorMessage(localTimeoutMsg, {
+              provider: settings.localBaseUrl,
+              route: 'local',
+              knowledgeBase: useSettingsStore.getState().settings.errorKnowledgeBase,
+            }).learnedSuggestion
+
+            if ((learnedAction === 'reduce_load_or_retry' || partial.trim().length >= 80) && !abortRef.current?.signal.aborted) {
+              const recoveryMessages = buildLocalRecoveryMessages(effectiveMessages, partial)
+              const recoveryMaxTokens = Math.max(120, Math.min(settings.localMaxTokens, 260))
+              const recoveryTimeoutMs = Math.max(LOCAL_RECOVERY_MIN_TIMEOUT_MS, Math.min(32_000, localAttemptTimeoutMs))
+              const recoveryAttempt = createProviderAttemptAbort(abortRef.current!.signal, recoveryTimeoutMs)
+              addChatTraceEvent(traceId, 'local_recovery_start', {
+                model: localModel,
+                timeoutMs: recoveryTimeoutMs,
+                maxTokens: recoveryMaxTokens,
+                contextTokens: estimateTokensFromChars(recoveryMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)),
+              })
+              updateMessage(convId, assistantId, '⏳ Local lento; reintentando con contexto compacto para completar la respuesta...', true)
+              try {
+                if (settings.streamResponses) {
+                  let acc = ''
+                  const streamUi = createStreamUpdateController((partialRecovery) => {
+                    updateMessage(convId!, assistantId, partialRecovery, true)
+                  })
+                  for await (const chunk of localClient.streamChat(
+                    localModel, recoveryMessages, sysPrompt,
+                    decision.temperature, recoveryMaxTokens, recoveryAttempt.signal,
+                  )) {
+                    if (chunk) recoveryAttempt.touch()
+                    acc += chunk
+                    streamUi.push(acc, chunk)
+                  }
+                  streamUi.flush(acc)
+                  updateMessage(convId!, assistantId, acc, false, undefined, `local • ${localModel} • compact-retry`)
+                } else {
+                  const recovered = await withAbortableTimeout(
+                    localClient.chat(
+                      localModel, recoveryMessages, sysPrompt, decision.temperature, recoveryMaxTokens,
+                    ),
+                    recoveryAttempt.signal,
+                    recoveryTimeoutMs,
+                  )
+                  updateMessage(convId!, assistantId, recovered, false, undefined, `local • ${localModel} • compact-retry`)
+                }
+                logError(localTimeoutMsg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
+                addChatTraceEvent(traceId, 'local_recovery_success', { model: localModel, maxTokens: recoveryMaxTokens })
+                traceStatus = 'success'
+                traceFinishAttrs = { finalRoute: 'local-recovery', model: localModel }
+                setIsLoading(false)
+                return
+              } catch (recoveryErr) {
+                addChatTraceEvent(traceId, 'local_recovery_error', {
+                  model: localModel,
+                  reason: summarizeProviderError(recoveryErr),
+                })
+              } finally {
+                recoveryAttempt.clear()
+              }
+            }
+
             updateMessage(convId, assistantId, `⚠️ ${localTimeoutMsg} → intentando fallback cloud...`, true)
             logError(localTimeoutMsg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
             localFailed = true
@@ -1646,6 +1742,7 @@ export function useChat(models: AIModel[] = []) {
                   cfg.model, effectiveMessages, sysPrompt,
                   decision.temperature, providerMaxTokens, providerAttempt.signal,
                 )) {
+                  if (chunk) providerAttempt.touch()
                   acc += chunk
                   streamUi.push(acc, chunk)
                 }
@@ -1741,6 +1838,7 @@ export function useChat(models: AIModel[] = []) {
                 localModel, effectiveMessages, sysPrompt,
                 decision.temperature, settings.localMaxTokens, localAttempt.signal,
               )) {
+                if (chunk) localAttempt.touch()
                 acc += chunk
                 streamUi.push(acc, chunk)
               }
@@ -1835,6 +1933,7 @@ export function useChat(models: AIModel[] = []) {
             cfg.model, effectiveMessages, sysPrompt,
             decision.temperature, providerMaxTokens, providerAttempt.signal,
           )) {
+            if (chunk) providerAttempt.touch()
             acc += chunk
             streamUi.push(acc, chunk)
           }
@@ -2012,6 +2111,7 @@ export function useChat(models: AIModel[] = []) {
                   cfg.model, effectiveMessages, sysPrompt,
                   decision.temperature, retryMaxTokens, retryAttempt.signal,
                 )) {
+                  if (chunk) retryAttempt.touch()
                   acc += chunk
                   streamUi.push(acc, chunk)
                 }
