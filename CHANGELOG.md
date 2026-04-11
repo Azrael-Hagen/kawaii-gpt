@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.26] - 2026-04-11
+### Added
+- Hybrid local→cloud continuation: when local times out mid-response with substantial partial content (≥80 chars), the partial is injected as an assistant turn + "Continúa desde donde quedaste" instruction so cloud resumes seamlessly rather than restarting
+- Cloud model auto-correction: `buildCloudQueue` now detects invalid configured models via recent `cloudConnectivity` data (model-not-found detail) and falls back to catalog selection when the preferred model is known bad
+- Process cleanup on quit: `legacyProcess` child is now killed via a `before-quit` hook so closing the window never leaves zombie processes behind
+
+### Fixed
+- `SettingsModal` type error: `getRuntimeMode()` return value now correctly cast to `'dev' | 'packaged' | 'unknown'` union type
+- Cloud fallback no longer retries with `reka/reka-edge` (or any other recently-confirmed invalid model) when `cloudConnectivity` signals model-not-found for the resolved baseUrl
+
 ## [0.4.25] - 2026-04-11
 ### Changed
 - Provider attempt timeouts are now progress-aware during streaming, so active responses no longer expire just because the total generation lasts longer than the original timeout window

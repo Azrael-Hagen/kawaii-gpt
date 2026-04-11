@@ -1,5 +1,23 @@
 # Engineer Log
 
+## [CP-17.2] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Added hybrid local→cloud continuation via `localPartial` capture: when local times out with ≥80 chars of response, the partial is prepended as assistant turn before cloud gets the request so cloud continues rather than restarts
+- Added cloud model auto-correction in `buildCloudQueue`: checks `cloudConnectivity` for recent model-not-found signals on the resolved baseUrl, and when found, clears the preferred model hint and filters the bad model out of the pool so catalog selection picks a healthy alternative
+- Added `before-quit` hook in main process to kill `legacyProcess` child; previously the spawned process would orphan when the Electron window was closed on Windows
+- Fixed `SettingsModal` TS type error: `getRuntimeMode()` result now cast to the expected union literal type
+
+**Trade-offs**:
+- Hybrid continuation injects two extra messages into the effective context for cloud; in extreme context-budget situations these messages could slightly reduce available history, but the benefit of seamless continuation outweighs this on typical payloads
+- Model auto-correction uses a 10-minute validity window on connectivity data; if the model is restored after 10 minutes this guard will stop firing (safe behavior)
+
+**Debt deferred**:
+- The `reka/reka-edge` model remains in `settings.cloudModel`; a UX flow to auto-suggest updating the persisted cloudModel when the connectivity guard fires repeatedly would improve the long-term experience
+
+**Next steps**:
+- Run real user session with intentional cloud trigger to confirm `reka/reka-edge` is consistently bypassed and `gpt-5.4-nano` (or catalog equivalent) takes over
+
 ## [CP-17.1] 2026-04-11
 **Status**: Passed
 **Decisions made**:

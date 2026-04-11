@@ -326,3 +326,10 @@ if (!hasSingleInstanceLock) {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
+
+app.on('before-quit', () => {
+  if (legacyProcess && !legacyProcess.killed) {
+    legacyProcess.kill()
+    legacyProcess = null
+  }
+})

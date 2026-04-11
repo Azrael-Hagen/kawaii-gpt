@@ -946,10 +946,37 @@ async function buildCloudQueue(
     .filter(m => m.provider !== 'ollama' && m.providerBaseUrl === baseUrl)
     .map(m => stripPrefix(m.name))
   const mainPool = mainCandidates.length > 0 ? mainCandidates : getCatalogModelsForBaseUrl(baseUrl)
-  const actualModel = pickSmartModelWithOptions(prompt, mainPool, preferredCloudModel, {
-    prioritizeUnrestricted: settings.prioritizeUnrestricted,
-    preferFreeTier: settings.preferFreeTier,
+  // If recent diagnostics flag the configured model as invalid (model not found / resource
+  // not available), suppress the preference and filter it out so catalog picks freely.
+  const recentConnModelBad = (settings.cloudConnectivity ?? []).some(conn => {
+    if (conn.ok) return false
+    if (!conn.checkedAt || Date.now() - conn.checkedAt > 10 * 60_000) return false
+    const connBase = extractBaseUrlFromConnectivityLabel(conn.label)
+    if (!connBase || connBase.toLowerCase() !== baseUrl.toLowerCase()) return false
+    return /no encuentra el modelo|model not found|is not a valid model|not a valid model id/i.test(conn.detail)
   })
+  const configuredModelKnownBad =
+    recentConnModelBad ||
+    (settings.cloudDiagnostics != null &&
+      Date.now() - (settings.cloudDiagnostics.lastAt ?? 0) < 10 * 60_000 &&
+      analyzeErrorMessage(settings.cloudDiagnostics.lastError ?? '').category === 'model')
+  const effectivePreferredModel = configuredModelKnownBad ? undefined : preferredCloudModel
+  const safeMainPool = configuredModelKnownBad
+    ? mainPool.filter(m => {
+        const mLow = m.toLowerCase()
+        const prefLow = preferredCloudModel.toLowerCase()
+        return mLow !== prefLow && stripPrefix(mLow) !== stripPrefix(prefLow)
+      })
+    : mainPool
+  const actualModel = pickSmartModelWithOptions(
+    prompt,
+    safeMainPool.length > 0 ? safeMainPool : getCatalogModelsForBaseUrl(baseUrl),
+    effectivePreferredModel,
+    {
+      prioritizeUnrestricted: settings.prioritizeUnrestricted,
+      preferFreeTier: settings.preferFreeTier,
+    },
+  )
 
   const mainKey = keyId === 'providerApiKey' ? mainApiKey : await getSecretKey(keyId)
 
@@ -1514,6 +1541,7 @@ export function useChat(models: AIModel[] = []) {
       })
       const localAttempt = createProviderAttemptAbort(abortRef.current!.signal, localAttemptTimeoutMs)
       let localFailed = false
+      let localPartial = ''
       try {
         if (settings.streamResponses) {
           let acc = ''
@@ -1628,6 +1656,7 @@ export function useChat(models: AIModel[] = []) {
               }
             }
 
+            localPartial = partial
             updateMessage(convId, assistantId, `⚠️ ${localTimeoutMsg} → intentando fallback cloud...`, true)
             logError(localTimeoutMsg, { provider: settings.localBaseUrl, route: 'local', autoRepairApplied: true })
             localFailed = true
@@ -1686,6 +1715,19 @@ export function useChat(models: AIModel[] = []) {
         effectiveMessages = trimMessagesForBudget(effectiveMessages, fallbackCloudContextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
         const afterFallbackChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
         effectiveContextChars = afterFallbackChars
+        // Hybrid continuation: if local started a response, pass it to cloud so it can continue
+        // from that point rather than restarting fresh.
+        if (localPartial.trim().length >= 80) {
+          effectiveMessages = [
+            ...effectiveMessages,
+            { role: 'assistant', content: localPartial.trim() },
+            { role: 'user', content: 'Continúa desde donde quedaste.' },
+          ]
+          effectiveContextChars += localPartial.length + 36
+          addChatTraceEvent(traceId, 'cloud_fallback_partial_continuation', {
+            partialChars: localPartial.length,
+          })
+        }
         addChatTraceEvent(traceId, 'context_budget_retrim_cloud_fallback', {
           beforeChars: beforeFallbackChars,
           afterChars: afterFallbackChars,

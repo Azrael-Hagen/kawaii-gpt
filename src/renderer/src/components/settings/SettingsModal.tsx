@@ -158,7 +158,7 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
     const additionalApiKeys = Object.fromEntries(
       Object.entries(additionalKeys).map(([id, value]) => [id, (value ?? '').trim()]),
     )
-    const runtimeMode = await window.api?.getRuntimeMode?.().catch(() => 'unknown') ?? 'unknown'
+    const runtimeMode = (await window.api?.getRuntimeMode?.().catch(() => 'unknown') ?? 'unknown') as 'dev' | 'packaged' | 'unknown'
     const payload = buildProviderConfigExportPayload(
       settings,
       {
