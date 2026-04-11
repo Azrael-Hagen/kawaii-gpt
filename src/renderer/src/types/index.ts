@@ -244,6 +244,8 @@ export interface ErrorLogEntry {
   analysis: ErrorAnalysis
 }
 
+export type LocalModelCapacityMode = 'auto' | 'conservative' | 'aggressive' | 'off'
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 export interface Settings extends ProviderSettings, SmartRoutingSettings {
@@ -271,6 +273,7 @@ export interface Settings extends ProviderSettings, SmartRoutingSettings {
   characterProfile: CharacterProfile
   temperature: number
   streamResponses: boolean
+  localModelCapacityMode: LocalModelCapacityMode
   prioritizeUnrestricted: boolean
   preferFreeTier: boolean
   cloudDiagnostics: CloudDiagnostics | null
@@ -339,6 +342,7 @@ export const DEFAULT_SETTINGS: Settings = {
   },
   temperature:     0.7,
   streamResponses: true,
+  localModelCapacityMode: 'auto',
   prioritizeUnrestricted: true,
   preferFreeTier: true,
   cloudDiagnostics: null,

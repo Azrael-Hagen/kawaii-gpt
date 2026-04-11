@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.31] - 2026-04-11
+### Added
+- New configurable local capacity filter mode in Settings with `Auto`, `Conservador`, `Agresivo`, and `Desactivado` options
+- Hardware profile bridge from Electron main/preload so renderer decisions use the current PC RAM/CPU profile safely
+
+### Changed
+- Local model filtering now uses the selected hardware profile mode instead of a fixed threshold
+- Persisted local model selections are auto-corrected to the strongest still-valid local candidate when a stricter capacity mode removes the previous choice
+
 ## [0.4.30] - 2026-04-11
 ### Added
 - New local model intelligence selector (`services/localModelSelector.ts`) that filters non-chat local models (embeddings/guard/ocr) and ranks compatible models by capability

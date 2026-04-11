@@ -318,7 +318,8 @@
 - [x] Existe selector local reutilizable que filtra modelos no compatibles de chat (embedding/guard/ocr)
 - [x] El ruteo local en smart/autoselector prioriza el modelo local mas inteligente disponible
 - [x] El bootstrap de modelos locales actualiza `localModel` con el mejor compatible para smart mode
+- [x] El filtro por capacidad local es configurable desde Settings (`auto`, `conservative`, `aggressive`, `off`) y corrige selecciones persistidas que queden fuera del perfil
 - [x] Pruebas unitarias agregadas para selector local y suite completa en verde
 - [x] Build de produccion en verde despues del cambio
 **Status**: `[x]`
-**Notes**: Se prioriza calidad local por defecto sin romper modo manual ni rutas de fallback existentes.
+**Notes**: Se prioriza calidad local por defecto sin romper modo manual ni rutas de fallback existentes, y ahora el umbral minimo puede ajustarse segun la estrategia deseada para la PC actual.

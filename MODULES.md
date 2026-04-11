@@ -43,10 +43,12 @@ Purpose:
 Public API:
 - `isCompatibleLocalChatModel(name)`
 - `scoreLocalModelIntelligence(name)`
+- `getRecommendedMinimumLocalModelSizeB(profile, mode?)`
+- `filterLocalModelsByHardwareCapacity(models, profile, mode?)`
 - `pickMostIntelligentLocalModel(models)`
 
 Purpose:
-- Selects the strongest compatible local Ollama model for smart/autoselector routes, excluding non-chat local models such as embeddings/guards/OCR variants
+- Selects the strongest compatible local Ollama model for smart/autoselector routes, excluding non-chat local models such as embeddings/guards/OCR variants and optionally hiding undersized models for the current hardware profile
 
 ## services/cloudCircuitBreaker.ts
 Public API:

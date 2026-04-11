@@ -1,7 +1,86 @@
-import type { AIModel } from '@/types'
+import type { AIModel, LocalModelCapacityMode } from '@/types'
+
+export type SystemHardwareProfile = {
+  totalMemoryGB: number
+  cpuCores: number
+  architecture: string
+}
 
 function normalize(value: string): string {
   return value.toLowerCase().trim()
+}
+
+function extractModelSizeB(model: AIModel): number | null {
+  if (typeof model.size === 'number' && Number.isFinite(model.size) && model.size > 0) {
+    return model.size / (1024 ** 3)
+  }
+
+  const lower = normalize(model.name)
+  const sizeMatch = lower.match(/(\d+(?:\.\d+)?)\s*b\b/)
+  if (!sizeMatch?.[1]) return null
+
+  const parsed = Number(sizeMatch[1])
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+export function getRecommendedMinimumLocalModelSizeB(
+  profile: SystemHardwareProfile | null,
+  mode: LocalModelCapacityMode = 'auto',
+): number {
+  if (!profile || !Number.isFinite(profile.totalMemoryGB)) return 0
+  if (mode === 'off') return 0
+
+  const ram = profile.totalMemoryGB
+  let floor = 0
+
+  if (mode === 'conservative') {
+    if (ram >= 64) floor = 12
+    else if (ram >= 48) floor = 8
+    else if (ram >= 32) floor = 7
+    else if (ram >= 24) floor = 4
+    else if (ram >= 16) floor = 3
+  } else if (mode === 'aggressive') {
+    if (ram >= 64) floor = 20
+    else if (ram >= 48) floor = 14
+    else if (ram >= 32) floor = 12
+    else if (ram >= 24) floor = 8
+    else if (ram >= 16) floor = 7
+    else if (ram >= 12) floor = 4
+  } else {
+    if (ram >= 64) floor = 14
+    else if (ram >= 48) floor = 12
+    else if (ram >= 32) floor = 8
+    else if (ram >= 24) floor = 7
+    else if (ram >= 16) floor = 4
+    else if (ram >= 12) floor = 3
+  }
+
+  if (profile.cpuCores <= 4) {
+    floor = Math.min(floor, 4)
+  }
+
+  return floor
+}
+
+export function filterLocalModelsByHardwareCapacity(
+  models: AIModel[],
+  profile: SystemHardwareProfile | null,
+  mode: LocalModelCapacityMode = 'auto',
+): AIModel[] {
+  const floor = getRecommendedMinimumLocalModelSizeB(profile, mode)
+  if (floor <= 0) return models
+
+  const candidates = models.filter(model => model.provider === 'ollama' && isCompatibleLocalChatModel(model.name))
+  if (candidates.length === 0) return models
+
+  const filtered = candidates.filter(model => {
+    const sizeB = extractModelSizeB(model)
+    if (sizeB == null) return true
+    return sizeB >= floor
+  })
+
+  // Keep compatibility in constrained environments where only small models are available.
+  return filtered.length > 0 ? filtered : candidates
 }
 
 export function isCompatibleLocalChatModel(name: string): boolean {

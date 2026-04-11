@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createChatClient, OpenAICompatibleClient } from '@/services/aiClient'
 import { getCatalogModelsForBaseUrl } from '@/services/cloudCatalog'
-import { pickMostIntelligentLocalModel } from '@/services/localModelSelector'
+import { filterLocalModelsByHardwareCapacity, pickMostIntelligentLocalModel } from '@/services/localModelSelector'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
 import { getProviderApiKey, getAdditionalProviderKey } from '@/utils/secureSettings'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -37,6 +37,8 @@ export function useModels() {
     const apiKey = await getProviderApiKey()
 
     try {
+      const hardwareProfile = await window.api?.getHardwareProfile?.().catch(() => null) ?? null
+
       if (settings.provider === 'smart') {
         const localSettings = {
           provider: 'ollama' as const,
@@ -82,6 +84,7 @@ export function useModels() {
           legacyOk && legacyClient ? legacyClient.listModels() : Promise.resolve([]),
         ])
         const cloudModels = mergeCatalog(settings.cloudBaseUrl, 'providerApiKey', cloudModelsRaw, 'cloud')
+        const localCandidates = filterLocalModelsByHardwareCapacity(localModels, hardwareProfile, settings.localModelCapacityMode)
 
         // ── Additional providers ──────────────────────────────────────────────
         const enabledAdditional = settings.additionalProviders.filter(
@@ -111,7 +114,7 @@ export function useModels() {
         const additionalOk = additionalModels.length > 0
 
         const merged: AIModel[] = [
-          ...localModels.map(m => ({
+          ...localCandidates.map(m => ({
             ...m,
             id: `local:${m.id}`,
             name: `[Local] ${m.name}`,
@@ -138,9 +141,13 @@ export function useModels() {
         setModels(merged)
 
         const patch: Partial<typeof settings> = {}
-        const smartestLocal = pickMostIntelligentLocalModel(localModels)
-        if ((!settings.localModel || settings.provider === 'smart') && smartestLocal) {
+        const smartestLocal = pickMostIntelligentLocalModel(localCandidates)
+        const localModelStillAvailable = !!settings.localModel && localCandidates.some(model => model.name === settings.localModel)
+        if ((smartestLocal && (!settings.localModel || settings.provider === 'smart')) || (smartestLocal && !localModelStillAvailable)) {
           patch.localModel = smartestLocal.name
+        }
+        if (smartestLocal && settings.provider === 'ollama' && (!settings.defaultModel || !localModelStillAvailable)) {
+          patch.defaultModel = smartestLocal.name
         }
         if (!settings.cloudModel && cloudModels.length > 0) patch.cloudModel = cloudModels[0].name
         if (!settings.legacyModel && legacyModelsRaw.length > 0) patch.legacyModel = legacyModelsRaw[0].name
@@ -181,9 +188,12 @@ export function useModels() {
 
         setStatus('connected')
         const list = await client.listModels()
-        const withCatalog = settings.provider === 'openai-compatible'
-          ? mergeCatalog(settings.cloudBaseUrl, 'providerApiKey', list, 'cloud')
+        const localAwareList = settings.provider === 'ollama'
+          ? filterLocalModelsByHardwareCapacity(list, hardwareProfile, settings.localModelCapacityMode)
           : list
+        const withCatalog = settings.provider === 'openai-compatible'
+          ? mergeCatalog(settings.cloudBaseUrl, 'providerApiKey', localAwareList, 'cloud')
+          : localAwareList
 
         // Tag with providerBaseUrl so useChat can route correctly
         const tagged: AIModel[] = withCatalog.map(m => ({
@@ -193,7 +203,16 @@ export function useModels() {
         }))
         setModels(tagged)
 
-        if (!settings.defaultModel && tagged.length > 0) {
+        if (settings.provider === 'ollama') {
+          const smartestLocal = pickMostIntelligentLocalModel(tagged)
+          const localModelStillAvailable = !!settings.localModel && tagged.some(model => model.name === settings.localModel)
+          if (smartestLocal && (!settings.localModel || !settings.defaultModel || !localModelStillAvailable)) {
+            update({
+              localModel: localModelStillAvailable && settings.localModel ? settings.localModel : smartestLocal.name,
+              defaultModel: !settings.defaultModel || !localModelStillAvailable ? smartestLocal.name : settings.defaultModel,
+            })
+          }
+        } else if (!settings.defaultModel && tagged.length > 0) {
           update({ defaultModel: tagged[0].name })
         }
       }

@@ -1,6 +1,7 @@
 import { app, BrowserWindow, shell, ipcMain, nativeImage } from 'electron'
 import { join } from 'path'
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { arch, cpus, totalmem } from 'os'
 import Store from 'electron-store'
 
 let mainWindowRef: BrowserWindow | null = null
@@ -19,6 +20,12 @@ let legacyProcess: ChildProcessWithoutNullStreams | null = null
 let legacyStatus: LegacyRuntimeStatus = { running: false }
 
 type WebSearchResult = { title: string; snippet: string; url: string }
+
+type SystemHardwareProfile = {
+  totalMemoryGB: number
+  cpuCores: number
+  architecture: string
+}
 
 function splitArgs(raw: string): string[] {
   return raw
@@ -220,6 +227,11 @@ ipcMain.handle('secret:set', (_e, key: string, value: string) => {
   secureStore.set(key, value)
 })
 ipcMain.handle('shell:openExternal', (_e, url: string) => shell.openExternal(url))
+ipcMain.handle('system:hardwareProfile', (): SystemHardwareProfile => ({
+  totalMemoryGB: Number((totalmem() / (1024 ** 3)).toFixed(1)),
+  cpuCores: cpus().length,
+  architecture: arch(),
+}))
 ipcMain.handle('web:search', async (_e, query: string, maxResults = 5) => {
   const q = query.trim()
   if (!q) return []

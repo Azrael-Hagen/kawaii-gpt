@@ -1,5 +1,21 @@
 # Engineer Log
 
+## [CP-22.1] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Added `localModelCapacityMode` to persisted settings so the user can tune hardware-aware local filtering between `auto`, `conservative`, `aggressive`, and `off`
+- Reused the existing local selector service instead of duplicating hardware-threshold logic in UI or chat runtime
+- Auto-corrected stale persisted `localModel` / `defaultModel` values when a stricter capacity profile removes the previously selected local model
+
+**Trade-offs**:
+- Thresholds remain heuristic and RAM/CPU-based; they do not yet account for quantization level, VRAM, or measured local tokens/sec
+
+**Debt deferred**:
+- Surface the detected hardware profile and computed floor directly in Settings for easier operator visibility
+
+**Next steps**:
+- Add optional benchmark-assisted local ranking so capacity mode can blend hardware fit with real latency/success measurements
+
 ## [CP-22] 2026-04-11
 **Status**: Passed
 **Decisions made**:

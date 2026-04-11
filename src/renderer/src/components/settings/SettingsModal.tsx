@@ -6,7 +6,7 @@ import { OllamaClient, OpenAICompatibleClient } from '@/services/aiClient'
 import { sessionBlacklistedProviders } from '@/hooks/useChat'
 import { listSpeechVoices } from '@/services/voice'
 import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
-import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus } from '@/types'
+import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus, LocalModelCapacityMode } from '@/types'
 import type { ConversationImportMode } from '@/services/conversationTransfer'
 import { buildProviderConfigExportPayload, parseProviderConfigImportPayload } from '@/services/providerConfigTransfer'
 import { formatTime } from '@/utils/formatters'
@@ -1266,6 +1266,22 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
             <p className="text-[11px] text-kawaii-dim">
               El catalogo cloud incluye familias GPT/ChatGPT, Gemini y Llama para seleccion automatica inteligente.
             </p>
+            <div className="space-y-1 pt-1">
+              <label className="block text-xs text-kawaii-muted">Filtro local segun capacidad de la PC</label>
+              <select
+                value={settings.localModelCapacityMode}
+                onChange={(e) => update({ localModelCapacityMode: e.target.value as LocalModelCapacityMode })}
+                className="w-full bg-kawaii-surface-2 border border-kawaii-surface-3 rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-kawaii-purple"
+              >
+                <option value="auto">Auto inteligente</option>
+                <option value="conservative">Conservador</option>
+                <option value="aggressive">Agresivo</option>
+                <option value="off">Desactivado</option>
+              </select>
+              <p className="text-[11px] text-kawaii-dim leading-relaxed">
+                Oculta modelos locales demasiado pequeños para la RAM y CPU actuales. Conservador deja mas opciones; Agresivo exige modelos mas capaces.
+              </p>
+            </div>
           </section>
 
           {/* ── Generative AI ───────────────────────────────────────────────── */}

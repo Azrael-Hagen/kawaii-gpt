@@ -7,6 +7,7 @@ interface Window {
     close: () => void
     getVersion: () => Promise<string>
     getRuntimeMode: () => Promise<'dev' | 'packaged'>
+    getHardwareProfile?: () => Promise<{ totalMemoryGB: number; cpuCores: number; architecture: string }>
     getSecret?: (key: string) => Promise<string>
     setSecret?: (key: string, value: string) => Promise<void>
     webSearch?: (query: string, maxResults?: number) => Promise<Array<{ title: string; snippet: string; url: string }>>
