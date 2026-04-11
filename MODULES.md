@@ -39,6 +39,17 @@ Public API:
 Purpose:
 - Centralizes token-limit resilience so chat can auto-reduce `max_tokens` after 402/credit errors and learn per-provider token caps from recent failures
 
+## services/cloudCircuitBreaker.ts
+Public API:
+- `getCloudProviderCircuitDecision(baseUrl, nowMs?)`
+- `markCloudProviderSuccess(baseUrl)`
+- `markCloudProviderFailure(baseUrl, message, nowMs?)`
+- `clearCloudProviderCircuit(baseUrl)`
+- `resetCloudCircuitBreaker()`
+
+Purpose:
+- Implements provider-level circuit breaker (`closed/open/half-open`) with exponential backoff + jitter and retry-after awareness, so cloud routing avoids hammering degraded providers and auto-recovers when they stabilize
+
 ## services/providerConfigTransfer.ts
 Public API:
 - `buildProviderConfigExportPayload(settings, secrets, runtime)`

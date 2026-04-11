@@ -1,5 +1,25 @@
 # Engineer Log
 
+## [CP-20] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Added provider-scoped circuit breaker in `services/cloudCircuitBreaker.ts` with `closed/open/half-open` states and full-jitter exponential backoff to reduce cascading retry storms
+- Integrated circuit decisions directly into cloud queue pruning in `useChat`, and wired per-attempt success/failure reporting so recovery is automatic without waiting for manual diagnostics
+- Added retry-window parsing (`retry-after`, `retry in`) to align reopen timing with provider throttle guidance when available
+- Removed automatic hard blacklisting on runtime fatal errors inside cloud loop; breaker now handles temporary isolation and half-open reentry for better self-healing
+
+**Trade-offs**:
+- Circuit state is in-memory (session-scoped), which keeps behavior fast and deterministic but does not survive app restarts
+- Fatal auth/quota/model errors now recover via breaker windows instead of permanent runtime lockout; this improves recovery potential but may retry again later if credentials remain invalid
+
+**Debt deferred**:
+- Persisting breaker telemetry in settings (with privacy-safe aggregation) for cross-session adaptive thresholds
+- Exposing breaker state in Settings diagnostics for explicit operator visibility during incidents
+
+**Next steps**:
+- Run controlled chaos tests (forced 429/503/timeouts) in packaged mode and tune thresholds by measured p95 recovery time
+- Add e2e scenario that validates half-open recovery after repeated provider failures
+
 ## [CP-17.2] 2026-04-11
 **Status**: Passed
 **Decisions made**:

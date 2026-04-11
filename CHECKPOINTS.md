@@ -283,3 +283,16 @@
 - [x] Tests relevantes y build en verde despues de la limpieza
 **Status**: `[x]`
 **Notes**: Se prioriza observabilidad accionable para debugging real sobre componentes de aprendizaje que no estaban mejorando recuperacion en runtime.
+
+---
+
+## CP-20: Enterprise-Grade Cloud Autorecovery
+**Milestone**: Endurecer recuperacion cloud con breaker adaptativo para evitar cascadas y recuperar automaticamente sin intervencion manual
+**Acceptance Criteria**:
+- [x] Existe un circuit breaker reutilizable por proveedor (`services/cloudCircuitBreaker.ts`) con estados `closed/open/half-open`
+- [x] El breaker aplica backoff exponencial con jitter y respeta ventanas tipo `retry-after` cuando el proveedor las expone
+- [x] `useChat` filtra la cola cloud usando el estado del breaker antes de intentar un proveedor
+- [x] `useChat` reporta exito/fallo por intento para cerrar o reabrir circuitos sin depender de UI
+- [x] Pruebas unitarias del breaker agregadas (`services/cloudCircuitBreaker.test.ts`) y suite/build verdes
+**Status**: `[x]`
+**Notes**: Se mantiene continuidad de chat bajo fallos transitorios y se reduce carga inutil sobre proveedores degradados, priorizando autorecovery progresivo.

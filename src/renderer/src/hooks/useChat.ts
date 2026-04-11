@@ -20,6 +20,11 @@ import {
   derivePromptLimitFromRecentErrors,
   deriveTokenCapFromRecentErrors,
 } from '@/services/chatResilience'
+import {
+  getCloudProviderCircuitDecision,
+  markCloudProviderFailure,
+  markCloudProviderSuccess,
+} from '@/services/cloudCircuitBreaker'
 import { addChatTraceEvent, finishChatTrace, startChatTrace, type ChatTraceStatus } from '@/services/chatTrace'
 import { estimateTokensFromChars } from '@/services/tokenBudget'
 import { computeChatRequestBudget } from '@/services/chatRequestBudget'
@@ -799,9 +804,11 @@ function shouldSkipProviderByConnectivity(settings: Settings, cfg: CloudCfg): bo
 }
 
 function pruneCloudQueue(settings: Settings, queue: CloudCfg[]): CloudCfg[] {
-  if (queue.length <= 1) return queue
+  if (queue.length === 0) return queue
 
   const viable = queue.filter(cfg => {
+    const circuitDecision = getCloudProviderCircuitDecision(cfg.baseUrl)
+    if (!circuitDecision.allowed) return false
     if (sessionBlacklistedProviders.has(cfg.baseUrl.toLowerCase())) return false
     if (shouldSkipProviderByConnectivity(settings, cfg)) return false
 
@@ -1813,6 +1820,7 @@ export function useChat(models: AIModel[] = []) {
                 updateMessage(convId!, assistantId, r, false, undefined, cfg.label)
               }
               updateSettings({ cloudDiagnostics: null })
+              markCloudProviderSuccess(cfg.baseUrl)
               addChatTraceEvent(traceId, 'cloud_attempt_success', {
                 provider: cfg.label,
                 elapsedMs: Date.now() - cloudAttemptStartedAt,
@@ -1824,6 +1832,7 @@ export function useChat(models: AIModel[] = []) {
               return
             } catch (cloudErr) {
               const errMsg = summarizeProviderError(cloudErr)
+              markCloudProviderFailure(cfg.baseUrl, errMsg)
               addChatTraceEvent(traceId, 'cloud_attempt_error', {
                 provider: cfg.label,
                 elapsedMs: Date.now() - cloudAttemptStartedAt,
@@ -2038,6 +2047,7 @@ export function useChat(models: AIModel[] = []) {
           updateMessage(convId!, assistantId, responseText, false, undefined, cfg.label)
         }
         updateSettings({ cloudDiagnostics: null })
+        markCloudProviderSuccess(cfg.baseUrl)
         addChatTraceEvent(traceId, 'cloud_attempt_success', {
           provider: cfg.label,
           elapsedMs: Date.now() - cloudAttemptStartedAt,
@@ -2065,6 +2075,7 @@ export function useChat(models: AIModel[] = []) {
             ? `⏰ Timeout: la operación de chat superó el límite de ${Math.round(adaptiveChatTimeoutMs / 1000)}s.`
             : `Timeout del proveedor tras ${Math.round(providerTimeoutMs / 1000)}s sin respuesta útil.`
           const errMsg = summarizeProviderError(timeoutMessage)
+          markCloudProviderFailure(cfg.baseUrl, errMsg)
           logError(errMsg, { provider: cfg.label, route: 'cloud' })
           updateSettings({
             cloudDiagnostics: {
@@ -2137,6 +2148,7 @@ export function useChat(models: AIModel[] = []) {
         }
 
         let errMsg = summarizeProviderError(err)
+        markCloudProviderFailure(cfg.baseUrl, errMsg)
         addChatTraceEvent(traceId, 'cloud_attempt_error', {
           provider: cfg.label,
           elapsedMs: Date.now() - cloudAttemptStartedAt,
@@ -2219,11 +2231,6 @@ export function useChat(models: AIModel[] = []) {
             code: extractStatusCode(errMsg),
           },
         })
-
-        // Black-list providers with fatal non-recoverable errors for the rest of the session
-        if (isFatalProviderError(err)) {
-          sessionBlacklistedProviders.add(cfg.baseUrl.toLowerCase())
-        }
 
         // Retryable cloud error → rotate to next provider in queue
         if (isRetryableCloudError(err) && idx < cloudQueue.length - 1) {

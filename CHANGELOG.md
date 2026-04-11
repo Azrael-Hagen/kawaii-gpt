@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.28] - 2026-04-11
+### Added
+- New cloud provider circuit breaker module (`services/cloudCircuitBreaker.ts`) with `closed/open/half-open` state machine and provider-scoped failure memory
+- Exponential backoff with jitter plus `retry-after` parsing to align recovery windows with provider throttling signals
+- Unit test suite for breaker behavior (`services/cloudCircuitBreaker.test.ts`) covering open, half-open, close, and retry window handling
+
+### Changed
+- Cloud queue pruning now respects circuit state before attempting provider calls, reducing repeated failures against degraded endpoints
+- Chat runtime now marks cloud provider success/failure per attempt so autorecovery decisions are fed by real execution outcomes
+- Fatal provider errors no longer force immediate hard session-blacklisting in the chat loop; breaker-based temporary isolation is used for better self-healing
+
 ## [0.4.27] - 2026-04-11
 ### Fixed
 - Messages with stale `isStreaming: true` (ghosts from crashed sessions) are now filtered out when building the API context in `sendMessage` — previously they caused empty `assistant: ""` turns that most providers reject with 400/422
