@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.29] - 2026-04-11
+### Added
+- Chaos validation scenarios for cloud circuit breaker (`services/cloudCircuitBreaker.test.ts`) covering: half-open probe failure re-open, fatal-first-failure open, and single in-flight half-open probe guard
+
+### Changed
+- Release gate now requires deterministic chaos coverage for cloud autorecovery before version promotion (CP-21)
+
 ## [0.4.28] - 2026-04-11
 ### Added
 - New cloud provider circuit breaker module (`services/cloudCircuitBreaker.ts`) with `closed/open/half-open` state machine and provider-scoped failure memory

@@ -296,3 +296,16 @@
 - [x] Pruebas unitarias del breaker agregadas (`services/cloudCircuitBreaker.test.ts`) y suite/build verdes
 **Status**: `[x]`
 **Notes**: Se mantiene continuidad de chat bajo fallos transitorios y se reduce carga inutil sobre proveedores degradados, priorizando autorecovery progresivo.
+
+---
+
+## CP-21: Chaos-Validated Recovery Gate
+**Milestone**: Validar autorecovery bajo escenarios de caos controlado antes de release
+**Acceptance Criteria**:
+- [x] Existe cobertura de caos para circuit breaker: reapertura en half-open fallido y control de una sola sonda half-open en vuelo
+- [x] Se valida que errores fatales abran circuito de forma inmediata para evitar cascadas
+- [x] Suite unitaria completa en verde despues de ampliar escenarios de resiliencia
+- [x] Build de produccion en verde posterior a la validacion
+- [x] Versionado y registro de cambios actualizados para release
+**Status**: `[x]`
+**Notes**: Se usaron pruebas deterministas de caos sobre el breaker para simular degradacion real sin depender de claves cloud ni entorno externo.

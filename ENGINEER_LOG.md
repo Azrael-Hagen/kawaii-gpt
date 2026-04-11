@@ -1,5 +1,21 @@
 # Engineer Log
 
+## [CP-21] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Added deterministic chaos tests in `services/cloudCircuitBreaker.test.ts` to validate two critical recovery paths: immediate re-open after failed half-open probe, and single in-flight half-open probe enforcement
+- Kept chaos validation at service level (pure unit tests) to avoid false negatives tied to external provider credentials or network volatility
+- Closed CP-21 only after full unit suite and production build succeeded on the release candidate
+
+**Trade-offs**:
+- Service-level chaos simulation gives repeatability and speed, but does not exercise full UI-driven network workflows end-to-end
+
+**Debt deferred**:
+- Add packaged-runtime chaos drills with synthetic provider stubs to validate recovery telemetry outside unit scope
+
+**Next steps**:
+- Add e2e resilience scenario that asserts route rotation timeline and breaker cooldown behavior through UI logs
+
 ## [CP-20] 2026-04-11
 **Status**: Passed
 **Decisions made**:

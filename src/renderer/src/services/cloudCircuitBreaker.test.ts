@@ -73,4 +73,43 @@ describe('cloudCircuitBreaker', () => {
     expect(healthy.state).toBe('closed')
     expect(healthy.reason).toBe('closed')
   })
+
+  it('re-opens immediately when half-open probe fails', () => {
+    __setCloudCircuitRandomForTests(() => 0)
+    const baseUrl = 'https://api.flaky.com/v1'
+
+    markCloudProviderFailure(baseUrl, 'timeout', 1_000)
+    markCloudProviderFailure(baseUrl, 'timeout', 1_050)
+
+    const halfOpenProbe = getCloudProviderCircuitDecision(baseUrl, 13_200)
+    expect(halfOpenProbe.allowed).toBe(true)
+    expect(halfOpenProbe.state).toBe('half-open')
+
+    markCloudProviderFailure(baseUrl, 'timeout', 13_220)
+
+    const blocked = getCloudProviderCircuitDecision(baseUrl, 13_400)
+    expect(blocked.allowed).toBe(false)
+    expect(blocked.state).toBe('open')
+    expect(blocked.retryInMs).toBeGreaterThan(0)
+  })
+
+  it('opens on first fatal error and only allows one half-open in-flight probe', () => {
+    __setCloudCircuitRandomForTests(() => 0)
+    const baseUrl = 'https://api.auth-broken.com/v1'
+
+    markCloudProviderFailure(baseUrl, 'Provider error (401): Invalid API key', 50_000)
+
+    const immediate = getCloudProviderCircuitDecision(baseUrl, 50_050)
+    expect(immediate.allowed).toBe(false)
+    expect(immediate.state).toBe('open')
+
+    const firstHalfOpen = getCloudProviderCircuitDecision(baseUrl, 290_100)
+    expect(firstHalfOpen.allowed).toBe(true)
+    expect(firstHalfOpen.state).toBe('half-open')
+
+    const secondHalfOpen = getCloudProviderCircuitDecision(baseUrl, 290_110)
+    expect(secondHalfOpen.allowed).toBe(false)
+    expect(secondHalfOpen.state).toBe('half-open')
+    expect(secondHalfOpen.reason).toBe('half-open-probe-in-flight')
+  })
 })
