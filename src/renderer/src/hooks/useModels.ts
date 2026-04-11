@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { createChatClient, OpenAICompatibleClient } from '@/services/aiClient'
 import { getCatalogModelsForBaseUrl } from '@/services/cloudCatalog'
+import { pickMostIntelligentLocalModel } from '@/services/localModelSelector'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
 import { getProviderApiKey, getAdditionalProviderKey } from '@/utils/secureSettings'
 import { useSettingsStore } from '@/store/settingsStore'
@@ -137,7 +138,10 @@ export function useModels() {
         setModels(merged)
 
         const patch: Partial<typeof settings> = {}
-        if (!settings.localModel && localModels.length > 0) patch.localModel = localModels[0].name
+        const smartestLocal = pickMostIntelligentLocalModel(localModels)
+        if ((!settings.localModel || settings.provider === 'smart') && smartestLocal) {
+          patch.localModel = smartestLocal.name
+        }
         if (!settings.cloudModel && cloudModels.length > 0) patch.cloudModel = cloudModels[0].name
         if (!settings.legacyModel && legacyModelsRaw.length > 0) patch.legacyModel = legacyModelsRaw[0].name
         if (!settings.defaultModel && merged.length > 0) patch.defaultModel = merged[0].name

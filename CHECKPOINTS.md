@@ -309,3 +309,16 @@
 - [x] Versionado y registro de cambios actualizados para release
 **Status**: `[x]`
 **Notes**: Se usaron pruebas deterministas de caos sobre el breaker para simular degradacion real sin depender de claves cloud ni entorno externo.
+
+---
+
+## CP-22: Local Intelligence-First Model Selection
+**Milestone**: Forzar que la ruta local del autoselector use solo modelos locales compatibles y de mayor capacidad
+**Acceptance Criteria**:
+- [x] Existe selector local reutilizable que filtra modelos no compatibles de chat (embedding/guard/ocr)
+- [x] El ruteo local en smart/autoselector prioriza el modelo local mas inteligente disponible
+- [x] El bootstrap de modelos locales actualiza `localModel` con el mejor compatible para smart mode
+- [x] Pruebas unitarias agregadas para selector local y suite completa en verde
+- [x] Build de produccion en verde despues del cambio
+**Status**: `[x]`
+**Notes**: Se prioriza calidad local por defecto sin romper modo manual ni rutas de fallback existentes.

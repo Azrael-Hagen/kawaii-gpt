@@ -1,5 +1,21 @@
 # Engineer Log
 
+## [CP-22] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Added `services/localModelSelector.ts` to centralize compatibility filtering and intelligence scoring for local Ollama models
+- Integrated selector into `useModels` to seed `localModel` with the strongest compatible model in smart mode
+- Integrated selector into `useChat` local resolution so smart/autoselector local path no longer picks the first local model arbitrarily
+
+**Trade-offs**:
+- Heuristic scoring (name + size + reasoning tags) is deterministic and fast, but still approximate compared with empirical quality benchmarks per hardware
+
+**Debt deferred**:
+- Add optional hardware-aware scoring (VRAM/latency budget) to avoid selecting models that are too heavy for constrained machines
+
+**Next steps**:
+- Add telemetry-based local model ranking to adapt quality selection with real completion success/latency data
+
 ## [CP-21] 2026-04-11
 **Status**: Passed
 **Decisions made**:

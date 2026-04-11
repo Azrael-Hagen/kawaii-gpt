@@ -177,10 +177,20 @@ export function pickSmartModelWithOptions(
     const m = model.toLowerCase()
     let score = 0
 
-    if (lowerPreferred && m === lowerPreferred) score += 8
-    if (/mini|nano|flash|haiku|8b|small|instant/.test(m)) score += targetComplex ? -1 : 4
-    if (/gpt-5\.4|gpt-4\.1|sonnet|opus|r1|70b|72b|pro/.test(m)) score += targetComplex ? 5 : 1
-    if (options.preferFreeTier && /free|nano|mini|flash|haiku/.test(m)) score += 2
+    if (lowerPreferred && m === lowerPreferred) score += 12
+
+    // Quality-first default: pick the strongest available model unless caller
+    // explicitly asks to prefer free-tier profiles.
+    if (/gpt-5\.4(?!-(mini|nano))/.test(m)) score += 30
+    if (/gpt-5|gpt-4\.1|sonnet|opus|r1|70b|72b|pro/.test(m)) score += 16
+    if (/mini|nano|flash|haiku|8b|small|instant/.test(m)) score -= 6
+
+    if (targetComplex && /gpt-5|gpt-4\.1|sonnet|opus|r1|70b|72b|pro/.test(m)) score += 4
+    if (targetComplex && /mini|nano|flash|haiku|8b|small|instant/.test(m)) score -= 2
+
+    if (options.preferFreeTier && /free|nano|mini|flash|haiku/.test(m)) score += 35
+    if (options.preferFreeTier && /gpt-5\.4(?!-(mini|nano))|opus/.test(m)) score -= 25
+
     if (options.prioritizeUnrestricted) {
       if (/llama|qwen|deepseek|mistral|r1|uncensored/.test(m)) score += 4
       if (/gpt|claude|gemini/.test(m)) score -= 1

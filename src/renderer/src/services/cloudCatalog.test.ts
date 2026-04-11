@@ -22,12 +22,21 @@ describe('cloudCatalog', () => {
     expect(openrouter.some(m => m.includes('gpt-5.4'))).toBe(true)
   })
 
-  it('picks fast model for short prompt and strong model for complex prompt', () => {
+  it('prefers strongest model by default for both short and complex prompts', () => {
     const candidates = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano']
     const quick = pickSmartModel('hola, resumen corto', candidates)
     const heavy = pickSmartModel('Analiza este codigo TypeScript y da un plan de refactor paso a paso', candidates)
-    expect(quick).not.toBe('gpt-5.4')
+    expect(quick).toBe('gpt-5.4')
     expect(heavy).toBe('gpt-5.4')
+  })
+
+  it('still honors free-tier preference when explicitly enabled', () => {
+    const candidates = ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.4-nano']
+    const picked = pickSmartModelWithOptions('necesito una respuesta rapida', candidates, undefined, {
+      prioritizeUnrestricted: false,
+      preferFreeTier: true,
+    })
+    expect(picked).not.toBe('gpt-5.4')
   })
 
   it('prefers less-restricted families when enabled', () => {

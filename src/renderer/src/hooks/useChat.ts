@@ -25,6 +25,7 @@ import {
   markCloudProviderFailure,
   markCloudProviderSuccess,
 } from '@/services/cloudCircuitBreaker'
+import { pickMostIntelligentLocalModel } from '@/services/localModelSelector'
 import { addChatTraceEvent, finishChatTrace, startChatTrace, type ChatTraceStatus } from '@/services/chatTrace'
 import { estimateTokensFromChars } from '@/services/tokenBudget'
 import { computeChatRequestBudget } from '@/services/chatRequestBudget'
@@ -925,10 +926,15 @@ function resolveProvider(
 }
 
 function resolveLocalModelName(settings: Settings, models: AIModel[]): string {
+  const strongest = pickMostIntelligentLocalModel(models)
+  if (settings.provider === 'smart' && strongest?.name) {
+    return stripPrefix(strongest.name)
+  }
+
   const explicit = stripPrefix(settings.localModel || '').trim()
   if (explicit) return explicit
 
-  const discoveredLocal = models.find(m => m.provider === 'ollama')?.name ?? ''
+  const discoveredLocal = strongest?.name ?? models.find(m => m.provider === 'ollama')?.name ?? ''
   return stripPrefix(discoveredLocal)
 }
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.4.30] - 2026-04-11
+### Added
+- New local model intelligence selector (`services/localModelSelector.ts`) that filters non-chat local models (embeddings/guard/ocr) and ranks compatible models by capability
+- Unit tests for local selector behavior (`services/localModelSelector.test.ts`)
+
+### Changed
+- Smart/autoselector local routing now prefers the most intelligent compatible Ollama model instead of the first discovered model
+- Local model bootstrap in `useModels` now auto-populates `localModel` with the strongest compatible local model for smart mode
+
 ## [0.4.29] - 2026-04-11
 ### Added
 - Chaos validation scenarios for cloud circuit breaker (`services/cloudCircuitBreaker.test.ts`) covering: half-open probe failure re-open, fatal-first-failure open, and single in-flight half-open probe guard
