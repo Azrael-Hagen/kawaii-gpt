@@ -10,3 +10,6 @@ Thumbs.db
 *.log
 *.tmp
 *.local
+backups/runtime-chat-settings-*.json
+resources/kawaii-provider-config-*.json
+src/main/kawaii-chat-backup-*.json

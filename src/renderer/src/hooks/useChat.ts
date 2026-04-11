@@ -310,18 +310,12 @@ function hasRecentLocalRuntimeConflict(settings: Settings): boolean {
   const logs = settings.errorLogs ?? []
   if (logs.length === 0) return false
 
-  let transientLocalFails = 0
-
   const hasHardConflict = logs.some(entry => {
     if (!entry.at || Date.now() - entry.at > LOCAL_CONFLICT_WINDOW_MS) return false
     const route = (entry.route ?? '').toLowerCase()
     if (!(route === 'local' || route.includes('->local'))) return false
 
     const msg = (entry.message ?? '').toLowerCase()
-    if (msg.includes('timeout') || msg.includes('timed out') || msg.includes('failed to fetch') || msg.includes('econnrefused')) {
-      transientLocalFails += 1
-    }
-
     return (
       msg.includes('memory layout cannot be allocated') ||
       msg.includes('out of memory') ||
@@ -329,7 +323,7 @@ function hasRecentLocalRuntimeConflict(settings: Settings): boolean {
     )
   })
 
-  return hasHardConflict || transientLocalFails >= 2
+  return hasHardConflict
 }
 
 function hasRecentLegacyConflict(settings: Settings): boolean {
@@ -1286,10 +1280,6 @@ export function useChat(models: AIModel[] = []) {
         cloudHints,
       )
 
-    const adaptiveCloudContextBudget = learnedPromptLimit
-      ? computeSafeContextCharsFromPromptLimit(learnedPromptLimit, text.length)
-      : CLOUD_CONTEXT_BUDGET_CHARS
-
     const requestedCloudMaxTokens = Math.max(120, settings.cloudMaxTokens || 700, decision.maxTokens || 0)
     const requestedLocalMaxTokens = Math.max(120, settings.localMaxTokens || 400)
     const tokenDrivenCloudContextBudget = requestedCloudMaxTokens <= 500
@@ -1312,15 +1302,16 @@ export function useChat(models: AIModel[] = []) {
 
     const systemPromptChars = sysPrompt.length
     const systemPromptTokens = estimateTokensFromChars(systemPromptChars)
+    const reservedPromptChars = text.length + systemPromptChars
+    const adaptiveCloudContextBudget = learnedPromptLimit
+      ? computeSafeContextCharsFromPromptLimit(learnedPromptLimit, reservedPromptChars)
+      : CLOUD_CONTEXT_BUDGET_CHARS
     const inferredPromptLimitTokens = target === 'local'
       ? null
       : (learnedPromptLimit ?? inferPromptLimitFromCloudQueue(cloudQueue, settings.preferFreeTier))
 
     const inputDrivenCloudContextBudget = inferredPromptLimitTokens
-      ? Math.max(
-        1_200,
-        Math.floor(inferredPromptLimitTokens * 3.8) - systemPromptChars - Math.floor(text.length * 1.1) - 260,
-      )
+      ? computeSafeContextCharsFromPromptLimit(inferredPromptLimitTokens, reservedPromptChars)
       : CLOUD_CONTEXT_BUDGET_CHARS
 
     const systemAwareLocalContextBudget = Math.max(1_400, Math.min(8_000, 9_000 - systemPromptChars))
@@ -1337,7 +1328,7 @@ export function useChat(models: AIModel[] = []) {
     const beforeTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
     effectiveMessages = trimMessagesForBudget(effectiveMessages, contextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
     const afterTrimChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
-    const effectiveContextChars = afterTrimChars
+    let effectiveContextChars = afterTrimChars
     const estimatedPromptTokens = estimateTokensFromChars(text.length)
     const estimatedContextTokens = estimateTokensFromChars(effectiveContextChars)
     addChatTraceEvent(traceId, 'context_budget', {
@@ -1350,6 +1341,7 @@ export function useChat(models: AIModel[] = []) {
       promptTokens: estimatedPromptTokens,
       systemPromptChars,
       systemPromptTokens,
+      reservedPromptChars,
       contextTokens: estimatedContextTokens,
       budgetChars: contextBudget,
       requestedCloudMaxTokens,
@@ -1570,7 +1562,7 @@ export function useChat(models: AIModel[] = []) {
           fallbackCloudHints,
         )
         const fallbackAdaptiveCloudBudget = fallbackLearnedPromptLimit
-          ? computeSafeContextCharsFromPromptLimit(fallbackLearnedPromptLimit, text.length)
+          ? computeSafeContextCharsFromPromptLimit(fallbackLearnedPromptLimit, reservedPromptChars)
           : CLOUD_CONTEXT_BUDGET_CHARS
         const fallbackRequestedCloudMaxTokens = Math.max(120, settings.cloudMaxTokens || 700)
         const fallbackTokenDrivenCloudBudget = fallbackRequestedCloudMaxTokens <= 500
@@ -1585,8 +1577,8 @@ export function useChat(models: AIModel[] = []) {
         const fallbackInferredPromptLimit = fallbackLearnedPromptLimit
           ?? inferPromptLimitFromCloudQueue(cloudQueue, settings.preferFreeTier)
         const fallbackInputDrivenBudget = Math.max(
-          1_200,
-          Math.floor(fallbackInferredPromptLimit * 3.8) - systemPromptChars - Math.floor(text.length * 1.1) - 260,
+          900,
+          computeSafeContextCharsFromPromptLimit(fallbackInferredPromptLimit, reservedPromptChars),
         )
         const fallbackCloudContextBudget = Math.min(
           CLOUD_CONTEXT_BUDGET_CHARS,
@@ -1597,6 +1589,7 @@ export function useChat(models: AIModel[] = []) {
         const beforeFallbackChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
         effectiveMessages = trimMessagesForBudget(effectiveMessages, fallbackCloudContextBudget, CONTEXT_BUDGET_MAX_MESSAGES)
         const afterFallbackChars = effectiveMessages.reduce((acc, item) => acc + estimateContextChars(item), 0)
+        effectiveContextChars = afterFallbackChars
         addChatTraceEvent(traceId, 'context_budget_retrim_cloud_fallback', {
           beforeChars: beforeFallbackChars,
           afterChars: afterFallbackChars,

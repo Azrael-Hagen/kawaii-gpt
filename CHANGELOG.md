@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.24] - 2026-04-11
+### Added
+- Provider configuration transfer tests covering export/import normalization and runtime metadata preservation
+- Git ignore rules for generated runtime/profile backups so parity artifacts do not leak into commits by accident
+
+### Changed
+- Prompt-limit context budgeting now reserves space for the full user prompt plus system prompt and uses a more conservative chars-per-token heuristic
+- Smart/local->cloud fallback recomputes effective context size after cloud re-trimming so timeout/token heuristics use the real compacted payload
+- Error diagnostics now distinguish prompt-window overflows from generic quota errors and learn `compact_context` as a reusable repair action
+
+### Fixed
+- Reduced recurrent `Prompt tokens limit exceeded` failures on OpenRouter-like providers when long persona/system prompts were present
+- Prevented prompt-limit learning from underestimating payload size by excluding the system prompt from reserved-budget math
+
 ## [0.4.23] - 2026-04-04
 ### Added
 - New token resilience module (`chatResilience`) to centralize parsing of provider affordability errors and adaptive token-cap derivation from recent failures

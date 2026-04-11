@@ -14,6 +14,9 @@ try {
   await page.waitForLoadState('domcontentloaded')
 
   const snapshot = await page.evaluate(async () => {
+    const runtimeMode = typeof window.api?.getRuntimeMode === 'function'
+      ? await window.api.getRuntimeMode().catch(() => 'unknown')
+      : 'unknown'
     const read = (key) => {
       try {
         const raw = localStorage.getItem(key)
@@ -43,6 +46,11 @@ try {
 
     return {
       exportedAt: new Date().toISOString(),
+      runtime: {
+        mode: runtimeMode,
+        url: location.href,
+        origin: location.origin,
+      },
       settings,
       chatSummary: {
         conversations: chats.length,

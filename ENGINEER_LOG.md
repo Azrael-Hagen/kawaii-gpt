@@ -1,5 +1,23 @@
 # Engineer Log
 
+## [CP-17] 2026-04-11
+**Status**: Passed
+**Decisions made**:
+- Tightened prompt-limit budgeting to reserve room for both the visible user turn and the effective system prompt before trimming history
+- Added prompt-limit specific learning so autorecovery can recognize `compact_context` as a distinct repair strategy instead of lumping it into generic quota handling
+- Protected generated parity artifacts and provider-export snapshots from accidental git inclusion
+
+**Trade-offs**:
+- Context trimming is now more conservative on small-window cloud providers, which may shorten recalled history sooner in exchange for higher delivery reliability
+
+**Debt deferred**:
+- Same-request cloud retry after a provider returns a prompt-limit error can still be added later for even more autonomous recovery
+- A dedicated runtime-profile diff script could make dev vs packaged audits faster than manual snapshot comparison
+
+**Next steps**:
+- Validate the same provider profile in dev and packaged after import/export to confirm parity under the user workflow
+- Observe new traces for real prompt-limit events and tune budgets further only if evidence still shows overflow
+
 ## [CP-01] 2026-03-25
 **Status**: Passed
 **Decisions made**:

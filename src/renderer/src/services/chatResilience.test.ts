@@ -81,7 +81,14 @@ describe('chatResilience', () => {
 
   it('computes safe context chars from learned prompt limit', () => {
     const chars = computeSafeContextCharsFromPromptLimit(1900, 240)
-    expect(chars).toBeGreaterThan(5_000)
-    expect(chars).toBeLessThan(8_000)
+    expect(chars).toBeGreaterThan(3_500)
+    expect(chars).toBeLessThan(4_500)
+  })
+
+  it('shrinks available context when reserved prompt chars are large', () => {
+    const shortPromptBudget = computeSafeContextCharsFromPromptLimit(1900, 240)
+    const longPromptBudget = computeSafeContextCharsFromPromptLimit(1900, 1_800)
+
+    expect(longPromptBudget).toBeLessThan(shortPromptBudget)
   })
 })

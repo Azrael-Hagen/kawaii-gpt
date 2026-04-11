@@ -32,7 +32,24 @@ function fingerprintError(message: string): string {
     .replace(/\b[a-f0-9]{8,}\b/gi, '{id}')
 }
 
-function inferRepairAction(category: ErrorAnalysis['category'], route?: string, autoRepairApplied?: boolean): string {
+function isPromptLimitMessage(message: string): boolean {
+  const lower = compact(message).toLowerCase()
+  return (
+    lower.includes('prompt tokens limit exceeded') ||
+    lower.includes('maximum context length') ||
+    lower.includes('context length exceeded') ||
+    lower.includes('input is too long') ||
+    (lower.includes('prompt') && lower.includes('token') && lower.includes('limit'))
+  )
+}
+
+function inferRepairAction(
+  category: ErrorAnalysis['category'],
+  message: string,
+  route?: string,
+  autoRepairApplied?: boolean,
+): string {
+  if (isPromptLimitMessage(message)) return 'compact_context'
   if (autoRepairApplied && route === 'cloud->local') return 'switch_to_local'
   if (autoRepairApplied && route === 'cloud->legacy') return 'switch_to_legacy'
   if (autoRepairApplied && route === 'legacy->local') return 'legacy_to_local'
@@ -82,6 +99,7 @@ function extractRecognitionNotes(
   }
   if (lower.includes('requested up to')) notes.push('signal:requested-up-to')
   if (lower.includes('can only afford')) notes.push('signal:can-only-afford')
+  if (isPromptLimitMessage(lower)) notes.push('signal:prompt-limit')
   if (lower.includes('openrouter')) notes.push('provider-hint:openrouter')
   if (lower.includes('ollama')) notes.push('provider-hint:ollama')
   if (lower.includes('legacy') || lower.includes('kawaii')) notes.push('provider-hint:legacy')
@@ -147,6 +165,7 @@ export function analyzeErrorMessage(
   let category: ErrorAnalysis['category'] = 'unknown'
   let probableCause = 'Fallo no clasificado en la app o el proveedor.'
   let suggestedFix = 'Revisar el reporte generado y repetir la accion con diagnostico habilitado.'
+  const promptLimitMessage = isPromptLimitMessage(message)
 
   if (
     lower.includes('402') ||
@@ -156,8 +175,12 @@ export function analyzeErrorMessage(
     lower.includes('requested up to')
   ) {
     category = 'policy'
-    probableCause = 'Credito/cuota insuficiente o presupuesto de tokens mayor al permitido por el proveedor.'
-    suggestedFix = 'Reducir max_tokens/contexto, usar otro proveedor con saldo, o recargar creditos.'
+    probableCause = promptLimitMessage
+      ? 'El prompt total excedio la ventana real del proveedor; el contexto enviado fue mayor al presupuesto disponible.'
+      : 'Credito/cuota insuficiente o presupuesto de tokens mayor al permitido por el proveedor.'
+    suggestedFix = promptLimitMessage
+      ? 'Compactar el historial, reservar espacio para system prompt y reintentar con menos contexto.'
+      : 'Reducir max_tokens/contexto, usar otro proveedor con saldo, o recargar creditos.'
   } else if (lower.includes('failed to fetch') || lower.includes('network') || lower.includes('load failed')) {
     category = 'network'
     probableCause = 'Fallo de red, CORS, endpoint inaccesible o proveedor temporalmente caido.'
@@ -276,7 +299,12 @@ export function updateErrorKnowledgeBase(
   entry: ErrorLogEntry,
 ): ErrorKnowledgeCase[] {
   const fingerprint = fingerprintError(entry.message)
-  const recommendedAction = inferRepairAction(entry.analysis.category, entry.route, entry.analysis.autoRepairApplied)
+  const recommendedAction = inferRepairAction(
+    entry.analysis.category,
+    entry.message,
+    entry.route,
+    entry.analysis.autoRepairApplied,
+  )
   const exact = knowledgeBase.find(item =>
     item.fingerprint === fingerprint &&
     item.category === entry.analysis.category &&

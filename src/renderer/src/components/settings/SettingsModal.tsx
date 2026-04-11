@@ -8,6 +8,7 @@ import { listSpeechVoices } from '@/services/voice'
 import { getProviderApiKey, setProviderApiKey, getAdditionalProviderKey, setAdditionalProviderKey } from '@/utils/secureSettings'
 import type { AIModel, AIProvider, AdditionalProvider, CloudConnectivityStatus } from '@/types'
 import type { ConversationImportMode } from '@/services/conversationTransfer'
+import { buildProviderConfigExportPayload, parseProviderConfigImportPayload } from '@/services/providerConfigTransfer'
 import { formatTime } from '@/utils/formatters'
 import { getCatalogModelsForBaseUrl } from '@/services/cloudCatalog'
 
@@ -84,8 +85,10 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const [availableVoices, setAvailableVoices] = useState<Array<{ name: string; lang: string; default: boolean }>>([])
   const [chatImportMode, setChatImportMode] = useState<ConversationImportMode>('merge')
   const [chatTransferNotice, setChatTransferNotice] = useState('')
+  const [providerTransferNotice, setProviderTransferNotice] = useState('')
   const characterImageInputRef = useRef<HTMLInputElement | null>(null)
   const chatImportInputRef = useRef<HTMLInputElement | null>(null)
+  const providerImportInputRef = useRef<HTMLInputElement | null>(null)
 
   useEffect(() => {
     if (!open) return
@@ -148,6 +151,115 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
   const beginChatImport = (mode: ConversationImportMode) => {
     setChatImportMode(mode)
     chatImportInputRef.current?.click()
+  }
+
+  const exportProviderConfiguration = async () => {
+    const mainApiKey = apiKey.trim()
+    const additionalApiKeys = Object.fromEntries(
+      Object.entries(additionalKeys).map(([id, value]) => [id, (value ?? '').trim()]),
+    )
+    const runtimeMode = await window.api?.getRuntimeMode?.().catch(() => 'unknown') ?? 'unknown'
+    const payload = buildProviderConfigExportPayload(
+      settings,
+      {
+        mainApiKey,
+        additionalApiKeys,
+      },
+      {
+        mode: runtimeMode,
+        url: window.location.href,
+        origin: window.location.origin,
+      },
+    )
+
+    const content = JSON.stringify(payload, null, 2)
+    const blob = new Blob([content], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    const anchor = document.createElement('a')
+    anchor.href = url
+    anchor.download = `kawaii-provider-config-${stamp}.json`
+    anchor.click()
+    URL.revokeObjectURL(url)
+    setProviderTransferNotice(`Configuración de proveedores exportada (${payload.runtime.mode.toUpperCase()}).`)
+  }
+
+  const beginProviderImport = () => {
+    providerImportInputRef.current?.click()
+  }
+
+  const onProviderImportFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+
+    try {
+      const text = await file.text()
+      const raw = JSON.parse(text)
+      const parsed = parseProviderConfigImportPayload(raw)
+      if (!parsed) {
+        setProviderTransferNotice('No se pudo importar: archivo inválido para configuración de proveedores.')
+        return
+      }
+
+      const importedProviders = parsed.providerConfig.additionalProviders
+      const existingIds = new Set((settings.additionalProviders ?? []).map(item => item.id))
+      const mergedProviders = (settings.additionalProviders ?? []).map(item => {
+        const imported = importedProviders.find(candidate => candidate.id === item.id)
+        return imported ? { ...item, ...imported } : item
+      })
+
+      const appendable = importedProviders.filter(item => !existingIds.has(item.id))
+      const normalizedProviders = [...mergedProviders, ...appendable].slice(0, 3)
+
+      const fallbackProviderBaseUrl = parsed.providerConfig.provider === 'ollama'
+        ? parsed.providerConfig.localBaseUrl
+        : parsed.providerConfig.provider === 'legacy-engine'
+          ? parsed.providerConfig.legacyEngineBaseUrl
+          : parsed.providerConfig.cloudBaseUrl
+
+      update({
+        provider: parsed.providerConfig.provider,
+        providerBaseUrl: parsed.providerConfig.providerBaseUrl || fallbackProviderBaseUrl,
+        localBaseUrl: parsed.providerConfig.localBaseUrl,
+        cloudBaseUrl: parsed.providerConfig.cloudBaseUrl,
+        legacyEngineBaseUrl: parsed.providerConfig.legacyEngineBaseUrl,
+        defaultModel: parsed.providerConfig.defaultModel,
+        localModel: parsed.providerConfig.localModel,
+        cloudModel: parsed.providerConfig.cloudModel,
+        legacyModel: parsed.providerConfig.legacyModel,
+        additionalProviders: normalizedProviders,
+        autoFailover: parsed.providerConfig.autoFailover,
+        preferFreeTier: parsed.providerConfig.preferFreeTier,
+        prioritizeUnrestricted: parsed.providerConfig.prioritizeUnrestricted,
+        smartLongPromptThreshold: parsed.providerConfig.smartLongPromptThreshold,
+        cloudMaxTokens: parsed.providerConfig.cloudMaxTokens,
+        localMaxTokens: parsed.providerConfig.localMaxTokens,
+        webSearchEnabled: parsed.providerConfig.webSearchEnabled,
+        webSearchMaxResults: parsed.providerConfig.webSearchMaxResults,
+        enableLegacyEngine: parsed.providerConfig.enableLegacyEngine,
+        legacyRuntimeCommand: parsed.providerConfig.legacyRuntimeCommand,
+        legacyRuntimeArgs: parsed.providerConfig.legacyRuntimeArgs,
+        legacyRuntimeCwd: parsed.providerConfig.legacyRuntimeCwd,
+      })
+
+      await setProviderApiKey(parsed.secrets.mainApiKey)
+      const nextAdditionalKeys: Record<string, string> = { ...additionalKeys }
+      for (const provider of normalizedProviders) {
+        const importedKey = parsed.secrets.additionalApiKeys[provider.id] ?? ''
+        nextAdditionalKeys[provider.id] = importedKey
+        await setAdditionalProviderKey(provider.id, importedKey)
+      }
+
+      setApiKey(parsed.secrets.mainApiKey)
+      setAdditionalKeys(nextAdditionalKeys)
+
+      const sourceRuntime = parsed.runtime ? `${parsed.runtime.mode.toUpperCase()} (${parsed.runtime.origin || 'unknown-origin'})` : 'origen desconocido'
+      setProviderTransferNotice(`Configuración importada correctamente. Fuente: ${sourceRuntime}.`)
+    } catch {
+      setProviderTransferNotice('No se pudo importar. Verifica que el archivo JSON sea válido y completo.')
+    } finally {
+      event.target.value = ''
+    }
   }
 
   const onChatImportFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -1768,6 +1880,41 @@ export default function SettingsModal({ open, onClose, models, status, onRefresh
                 accept="application/json,.json"
                 className="hidden"
                 onChange={onChatImportFileSelected}
+              />
+            </div>
+
+            <div className="rounded-lg border border-kawaii-surface-3 bg-kawaii-surface-2 p-2.5 space-y-2">
+              <div className="text-xs font-semibold text-kawaii-text">Paridad DEV/PACKAGED: configuración de proveedores</div>
+              <p className="text-[11px] text-kawaii-dim leading-relaxed">
+                Exporta/importa endpoints, modelos y API keys para clonar exactamente la configuración entre entornos.
+              </p>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void exportProviderConfiguration()}
+                  className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-2.5 py-1.5 text-xs text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                >
+                  <Download size={12} />
+                  Exportar config providers
+                </button>
+                <button
+                  type="button"
+                  onClick={beginProviderImport}
+                  className="inline-flex items-center gap-1 rounded-lg border border-kawaii-surface-3 bg-kawaii-surface px-2.5 py-1.5 text-xs text-kawaii-dim hover:text-kawaii-text hover:bg-kawaii-surface-3"
+                >
+                  <Upload size={12} />
+                  Importar config providers
+                </button>
+              </div>
+              {providerTransferNotice && (
+                <p className="text-[11px] text-kawaii-dim leading-relaxed">{providerTransferNotice}</p>
+              )}
+              <input
+                ref={providerImportInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={onProviderImportFileSelected}
               />
             </div>
           </section>

@@ -103,4 +103,25 @@ describe('errorDiagnostics', () => {
     expect(learnedTwice).toHaveLength(1)
     expect(learnedTwice[0].seenCount).toBe(2)
   })
+
+  it('learns prompt-limit failures as compact-context repairs', () => {
+    const repaired = createErrorLogEntry({
+      source: 'chat',
+      message: 'Provider error (402): Prompt tokens limit exceeded: 3267 > 1900.',
+      route: 'cloud->local',
+      provider: 'cloud • openai/gpt-5.4-mini',
+      autoRepairApplied: true,
+    })
+
+    const knowledgeBase = updateErrorKnowledgeBase([], repaired)
+    const analysis = analyzeErrorMessage('Provider error (402): Prompt tokens limit exceeded: 2809 > 1900.', {
+      route: 'cloud',
+      provider: 'cloud • openai/gpt-5.4-mini',
+      knowledgeBase,
+    })
+
+    expect(knowledgeBase[0].recommendedAction).toBe('compact_context')
+    expect(analysis.recognitionNotes).toContain('signal:prompt-limit')
+    expect(analysis.suggestedFix).toContain('Compactar el historial')
+  })
 })

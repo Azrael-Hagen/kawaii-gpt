@@ -33,10 +33,19 @@ Purpose:
 Public API:
 - `extractAffordableTokensFromError(message)`
 - `computeQuotaRetryMaxTokens(requestedMaxTokens, errorMessage)`
+- `computeSafeContextCharsFromPromptLimit(promptLimitTokens, reservedPromptChars)`
 - `deriveTokenCapFromRecentErrors(logs, providerHints, now?)`
 
 Purpose:
 - Centralizes token-limit resilience so chat can auto-reduce `max_tokens` after 402/credit errors and learn per-provider token caps from recent failures
+
+## services/providerConfigTransfer.ts
+Public API:
+- `buildProviderConfigExportPayload(settings, secrets, runtime)`
+- `parseProviderConfigImportPayload(raw)`
+
+Purpose:
+- Exports and imports provider endpoints, model selection, runtime metadata, and secret snapshots so dev and packaged profiles can be aligned without manual re-entry
 
 ## services/chatTrace.ts
 Public API:

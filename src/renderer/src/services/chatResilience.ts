@@ -3,10 +3,10 @@ import type { ErrorLogEntry } from '@/types'
 const TOKEN_WINDOW_MS = 6 * 60 * 60_000
 const MIN_SAFE_COMPLETION_TOKENS = 120
 const RETRY_SAFETY_MARGIN = 24
-const CONTEXT_TOKEN_SAFETY_MARGIN = 140
+const CONTEXT_TOKEN_SAFETY_MARGIN = 220
 const MIN_CONTEXT_TOKENS = 220
 const MAX_CONTEXT_CHARS = 28_000
-const CHARS_PER_TOKEN = 3.8
+const SAFE_CONTEXT_CHARS_PER_TOKEN = 2.6
 
 export function extractAffordableTokensFromError(message: string): number | null {
   const text = (message ?? '').toLowerCase()
@@ -65,14 +65,14 @@ export function extractPromptLimitFromError(message: string): number | null {
 
 export function computeSafeContextCharsFromPromptLimit(
   promptLimitTokens: number,
-  promptChars: number,
+  reservedPromptChars: number,
 ): number {
-  const promptTokens = Math.max(0, Math.ceil(promptChars / CHARS_PER_TOKEN))
+  const promptTokens = Math.max(0, Math.ceil(reservedPromptChars / SAFE_CONTEXT_CHARS_PER_TOKEN))
   const safeContextTokens = Math.max(
     MIN_CONTEXT_TOKENS,
     promptLimitTokens - promptTokens - CONTEXT_TOKEN_SAFETY_MARGIN,
   )
-  return Math.max(1_200, Math.min(MAX_CONTEXT_CHARS, Math.floor(safeContextTokens * CHARS_PER_TOKEN)))
+  return Math.max(900, Math.min(MAX_CONTEXT_CHARS, Math.floor(safeContextTokens * SAFE_CONTEXT_CHARS_PER_TOKEN)))
 }
 
 function matchesProviderHint(providerText: string, hints: string[]): boolean {
