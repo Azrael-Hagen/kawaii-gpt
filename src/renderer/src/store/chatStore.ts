@@ -267,7 +267,28 @@ const storeImpl = (set, get) => ({
 })
 
 export const useChatStore = create<ChatState>()(
-  persist(storeImpl, { name: 'kawaii-gpt-chats', version: 1 })
+  persist(storeImpl, {
+    name: 'kawaii-gpt-chats',
+    version: 1,
+    // On rehydration, clear any stale isStreaming=true flags left by crashed sessions
+    // and strip empty assistant ghost messages from the tail of each conversation.
+    onRehydrateStorage: () => (state) => {
+      if (!state) return
+      state.conversations = state.conversations.map(conv => ({
+        ...conv,
+        messages: conv.messages
+          // Clear stale streaming flag
+          .map(m => m.isStreaming ? { ...m, isStreaming: false } : m)
+          // Drop empty assistant tail-ghosts (empty content, no routeInfo = never completed)
+          .filter((m, idx, arr) => {
+            if (m.role !== 'assistant') return true
+            if ((m.content ?? '').trim() !== '') return true
+            // Allow empty assistants that are NOT at the tail
+            return idx < arr.length - 1
+          }),
+      }))
+    },
+  })
 )
 
 // ── Helpers re-exported for convenience ──────────────────────────────────────

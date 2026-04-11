@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.27] - 2026-04-11
+### Fixed
+- Messages with stale `isStreaming: true` (ghosts from crashed sessions) are now filtered out when building the API context in `sendMessage` — previously they caused empty `assistant: ""` turns that most providers reject with 400/422
+- Empty assistant placeholder messages (content = "") at the tail of a conversation no longer reach the API
+- Consecutive duplicate user messages (from retry double-sends) are deduplicated before the API call
+- Store rehydration now clears all residual `isStreaming: true` flags and removes empty assistant tail-ghosts on app start so the UI no longer shows stuck loading spinners from past crashes
+- Imported conversations (`conversationTransfer`) now always land with `isStreaming: false` and without empty assistant tail messages
+
 ## [0.4.26] - 2026-04-11
 ### Added
 - Hybrid local→cloud continuation: when local times out mid-response with substantial partial content (≥80 chars), the partial is injected as an assistant turn + "Continúa desde donde quedaste" instruction so cloud resumes seamlessly rather than restarting

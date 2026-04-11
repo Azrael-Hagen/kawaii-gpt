@@ -1087,9 +1087,21 @@ export function useChat(models: AIModel[] = []) {
       rename(convId, titleFromMessage(text || attachments[0]?.name || 'Nuevo chat'))
     }
 
-    const apiMessages: ChatMessageInput[] = (
-      useChatStore.getState().conversations.find(c => c.id === convId)?.messages ?? []
-    ).map(m => ({ role: m.role, content: m.content, attachments: m.attachments }))
+    const rawMessages = useChatStore.getState().conversations.find(c => c.id === convId)?.messages ?? []
+    // Sanitize history before sending:
+    // 1. Drop stale isStreaming=true messages (ghosts from crashed sessions)
+    // 2. Drop empty assistant turns (empty content produces API errors on most providers)
+    // 3. Deduplicate consecutive user messages with identical content (from retry double-sends)
+    const sanitizedMessages = rawMessages
+      .filter(m => !m.isStreaming)
+      .filter(m => !(m.role === 'assistant' && (m.content ?? '').trim() === ''))
+      .filter((m, idx, arr) => {
+        if (m.role !== 'user' || idx === 0) return true
+        const prev = arr[idx - 1]
+        return !(prev.role === 'user' && prev.content === m.content)
+      })
+    const apiMessages: ChatMessageInput[] = sanitizedMessages
+      .map(m => ({ role: m.role, content: m.content, attachments: m.attachments }))
 
     const assistantId = addMessage(convId, {
       role: 'assistant', content: '', timestamp: Date.now(), isStreaming: true,

@@ -50,7 +50,7 @@ function normalizeMessage(raw: unknown, index: number): Message {
     role: asRole(obj.role, 'user'),
     content: asString(obj.content, ''),
     timestamp,
-    isStreaming: Boolean(obj.isStreaming),
+    isStreaming: false,   // Always false on import — previous-session streaming state is stale
     routeInfo: asString(obj.routeInfo, undefined as unknown as string),
     imageUrl: asString(obj.imageUrl, undefined as unknown as string),
     attachments: Array.isArray(obj.attachments) ? (obj.attachments as Message['attachments']) : undefined,
@@ -72,7 +72,15 @@ function normalizeConversation(raw: unknown, index: number): Conversation | null
   const obj = asObject(raw)
   if (!obj) return null
 
-  const messages = asArray(obj.messages).map((item, msgIndex) => normalizeMessage(item, msgIndex))
+  const messages = asArray(obj.messages)
+    .map((item, msgIndex) => normalizeMessage(item, msgIndex))
+    // Drop empty assistant turns that were ghost-placeholder from crashed sessions
+    .filter((m, idx, arr) => {
+      if (m.role !== 'assistant') return true
+      if ((m.content ?? '').trim() !== '') return true
+      // Keep non-empty assistant turns, drop empty ones only at the tail
+      return idx < arr.length - 1
+    })
   const createdAt = asNumber(obj.createdAt, Date.now())
   const updatedAt = asNumber(obj.updatedAt, createdAt)
 
