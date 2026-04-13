@@ -8,6 +8,19 @@
 
 ---
 
+## CP-23: Provider Reliability & Security Audit
+**Milestone**: Auditoría integral de selección/conexión de proveedores, autorecovery y hardening de release
+**Acceptance Criteria**:
+- [x] Rutas de fallback local (legacy->local, cloud->local, cloud-timeout->local) usan timeout por intento y no dependen solo del timeout global
+- [x] Generación de imagen respeta cancelación (`AbortSignal`) y deja de colgarse cuando se detiene la operación
+- [x] Tests unitarios y de integración en verde tras los cambios
+- [x] E2E crítico de UI/chat en verde
+- [x] `npm audit --audit-level=high` sin hallazgos HIGH/CRITICAL
+**Status**: `[x]`
+**Notes**: Quedan 6 hallazgos moderados en toolchain Vite/electron-vite (requieren migración major), diferidos para checkpoint dedicado sin mezclar con este parche de hardening.
+
+---
+
 ## CP-01: Foundation
 **Milestone**: App boots, Electron window opens, config loads, Ollama health check runs
 **Acceptance Criteria**:

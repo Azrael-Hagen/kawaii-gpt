@@ -160,7 +160,7 @@ export interface ChatClient {
     maxTokens?: number,
   ): Promise<string>
   /** Optional — only supported by cloud providers */
-  generateImage?(prompt: string, model?: string): Promise<string>
+  generateImage?(prompt: string, model?: string, signal?: AbortSignal): Promise<string>
 }
 
 export interface ProviderSettings {

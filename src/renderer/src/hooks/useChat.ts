@@ -1241,10 +1241,17 @@ export function useChat(models: AIModel[] = []) {
 
           for (let modelIdx = 0; modelIdx < imageModels.length; modelIdx++) {
             const imageModel = imageModels[modelIdx]
+            const imageAttemptTimeoutMs = computeAdaptiveProviderTimeoutMs(
+              useSettingsStore.getState().settings,
+              cfg.baseUrl,
+              characterAwarePrompt.length,
+              decision.maxTokens,
+            )
+            const imageAttempt = createProviderAttemptAbort(abortRef.current!.signal, imageAttemptTimeoutMs)
 
             try {
               const imgClient = new OpenAICompatibleClient(cfg.baseUrl, cfg.apiKey)
-              const imageUrl = await imgClient.generateImage(characterAwarePrompt, imageModel)
+              const imageUrl = await imgClient.generateImage(characterAwarePrompt, imageModel, imageAttempt.signal)
               updateMessage(
                 convId,
                 assistantId,
@@ -1295,6 +1302,8 @@ export function useChat(models: AIModel[] = []) {
               }
 
               break
+            } finally {
+              imageAttempt.clear()
             }
           }
 
@@ -1501,6 +1510,13 @@ export function useChat(models: AIModel[] = []) {
         if (settings.provider === 'smart' && settings.autoFailover && fallbackLocalModel && !avoidLocalFallback) {
           const localModel = fallbackLocalModel
           const localClient = new OllamaClient(settings.localBaseUrl)
+          const localFallbackTimeoutMs = computeLocalAttemptTimeoutMs(
+            useSettingsStore.getState().settings,
+            settings.provider === 'smart',
+            effectiveContextChars,
+            settings.localMaxTokens,
+          )
+          const localFallbackAttempt = createProviderAttemptAbort(abortRef.current!.signal, localFallbackTimeoutMs)
           updateMessage(convId!, assistantId, `⚠️ Kawaii no disponible (${msg}) → usando modelo local...`, true)
           try {
             if (settings.streamResponses) {
@@ -1510,8 +1526,9 @@ export function useChat(models: AIModel[] = []) {
               })
               for await (const chunk of localClient.streamChat(
                 localModel, effectiveMessages, sysPrompt,
-                decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
+                decision.temperature, settings.localMaxTokens, localFallbackAttempt.signal,
               )) {
+                if (chunk) localFallbackAttempt.touch()
                 acc += chunk
                 streamUi.push(acc, chunk)
               }
@@ -1519,8 +1536,12 @@ export function useChat(models: AIModel[] = []) {
               updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback) • ${localModel}`)
               logError(msg, { provider: settings.localBaseUrl, route: 'legacy->local', autoRepairApplied: true })
             } else {
-              const r = await localClient.chat(
-                localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+              const r = await withAbortableTimeout(
+                localClient.chat(
+                  localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+                ),
+                localFallbackAttempt.signal,
+                localFallbackTimeoutMs,
               )
               updateMessage(convId!, assistantId, r, false, undefined, `local (fallback) • ${localModel}`)
               logError(msg, { provider: settings.localBaseUrl, route: 'legacy->local', autoRepairApplied: true })
@@ -1533,6 +1554,7 @@ export function useChat(models: AIModel[] = []) {
             setError(fbMsg)
             updateMessage(convId!, assistantId, `⚠️ ${fbMsg}`, false)
           } finally {
+            localFallbackAttempt.clear()
             setIsLoading(false)
           }
           return
@@ -2110,6 +2132,13 @@ export function useChat(models: AIModel[] = []) {
           if (settings.autoFailover && fallbackLocalModel && !avoidLocalFallback) {
             const localModel = fallbackLocalModel
             const localClient = new OllamaClient(settings.localBaseUrl)
+            const localFallbackTimeoutMs = computeLocalAttemptTimeoutMs(
+              useSettingsStore.getState().settings,
+              settings.provider === 'smart',
+              effectiveContextChars,
+              settings.localMaxTokens,
+            )
+            const localFallbackAttempt = createProviderAttemptAbort(abortRef.current!.signal, localFallbackTimeoutMs)
             updateMessage(convId!, assistantId, `⚠️ Nube agotada por timeout (${errMsg}) → usando modelo local...`, true)
             try {
               if (settings.streamResponses) {
@@ -2119,16 +2148,21 @@ export function useChat(models: AIModel[] = []) {
                 })
                 for await (const chunk of localClient.streamChat(
                   localModel, effectiveMessages, sysPrompt,
-                  decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
+                  decision.temperature, settings.localMaxTokens, localFallbackAttempt.signal,
                 )) {
+                  if (chunk) localFallbackAttempt.touch()
                   acc += chunk
                   streamUi.push(acc, chunk)
                 }
                 streamUi.flush(acc)
                 updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback-timeout) • ${localModel}`)
               } else {
-                const r = await localClient.chat(
-                  localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+                const r = await withAbortableTimeout(
+                  localClient.chat(
+                    localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+                  ),
+                  localFallbackAttempt.signal,
+                  localFallbackTimeoutMs,
                 )
                 updateMessage(convId!, assistantId, r, false, undefined, `local (fallback-timeout) • ${localModel}`)
               }
@@ -2144,6 +2178,8 @@ export function useChat(models: AIModel[] = []) {
               updateMessage(convId!, assistantId, `⚠️ ${fbMsg}`, false)
               setIsLoading(false)
               return
+            } finally {
+              localFallbackAttempt.clear()
             }
           }
 
@@ -2257,6 +2293,13 @@ export function useChat(models: AIModel[] = []) {
         if (settings.autoFailover && fallbackLocalModel && !avoidLocalFallback) {
           const localModel = fallbackLocalModel
           const localClient = new OllamaClient(settings.localBaseUrl)
+          const localFallbackTimeoutMs = computeLocalAttemptTimeoutMs(
+            useSettingsStore.getState().settings,
+            settings.provider === 'smart',
+            effectiveContextChars,
+            settings.localMaxTokens,
+          )
+          const localFallbackAttempt = createProviderAttemptAbort(abortRef.current!.signal, localFallbackTimeoutMs)
           updateMessage(convId!, assistantId, `⚠️ Nube sin disponibilidad (${errMsg}) → usando modelo local...`, true)
           try {
             if (settings.streamResponses) {
@@ -2266,8 +2309,9 @@ export function useChat(models: AIModel[] = []) {
               })
               for await (const chunk of localClient.streamChat(
                 localModel, effectiveMessages, sysPrompt,
-                decision.temperature, settings.localMaxTokens, abortRef.current!.signal,
+                decision.temperature, settings.localMaxTokens, localFallbackAttempt.signal,
               )) {
+                if (chunk) localFallbackAttempt.touch()
                 acc += chunk
                 streamUi.push(acc, chunk)
               }
@@ -2275,8 +2319,12 @@ export function useChat(models: AIModel[] = []) {
               updateMessage(convId!, assistantId, acc, false, undefined, `local (fallback) • ${localModel}`)
               logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
             } else {
-              const r = await localClient.chat(
-                localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+              const r = await withAbortableTimeout(
+                localClient.chat(
+                  localModel, effectiveMessages, sysPrompt, decision.temperature, settings.localMaxTokens,
+                ),
+                localFallbackAttempt.signal,
+                localFallbackTimeoutMs,
               )
               updateMessage(convId!, assistantId, r, false, undefined, `local (fallback) • ${localModel}`)
               logError(errMsg, { provider: settings.localBaseUrl, route: 'cloud->local', autoRepairApplied: true })
@@ -2288,6 +2336,8 @@ export function useChat(models: AIModel[] = []) {
             logError(fbMsg, { provider: settings.localBaseUrl, route: 'cloud->local' })
             setError(fbMsg)
             updateMessage(convId!, assistantId, `⚠️ ${fbMsg}`, false)
+          } finally {
+            localFallbackAttempt.clear()
           }
           setIsLoading(false)
           return

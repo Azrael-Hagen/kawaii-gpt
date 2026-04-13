@@ -429,14 +429,14 @@ export class OpenAICompatibleClient implements ChatClient {
     return data.choices?.[0]?.message?.content ?? ''
   }
 
-  async generateImage(prompt: string, model = 'dall-e-3'): Promise<string> {
+  async generateImage(prompt: string, model = 'dall-e-3', signal?: AbortSignal): Promise<string> {
     if (!this.apiKey) throw new Error('API key required for image generation.')
 
     const res = await fetch(`${this.base}/images/generations`, {
       method: 'POST',
       headers: buildAuthHeaders(this.apiKey),
       body: JSON.stringify({ model, prompt, n: 1, size: '1024x1024' }),
-      signal: createTimeoutSignal(undefined, REQUEST_TIMEOUT_MS),
+      signal: createTimeoutSignal(signal, REQUEST_TIMEOUT_MS),
     })
 
     if (!res.ok) {

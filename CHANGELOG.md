@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.4.32] - 2026-04-13
+### Added
+- Smart routing regression test to enforce cloud cooldown fallback even when `localModel` is empty and resolved automatically
+- Abort-signal coverage test for image generation requests in `aiClient`
+
+### Changed
+- Image generation requests now accept and propagate `AbortSignal`, so global timeout and manual stop can cancel stuck image calls
+- Cloud and legacy fallback paths now enforce per-attempt local timeouts (including streaming fallback branches), reducing hangs and retry cascades on degraded runtimes
+- Updated Electron to `^41.2.0` and refreshed lockfile security patches via `npm audit fix`
+
+### Fixed
+- Prevented image generation attempts from ignoring cancellation/timeout controls
+- Removed several dependency vulnerabilities (`npm audit --audit-level=high` now reports zero HIGH/CRITICAL findings; remaining advisories are moderate and tied to major-toolchain upgrades)
+
 ## [0.4.31] - 2026-04-11
 ### Added
 - New configurable local capacity filter mode in Settings with `Auto`, `Conservador`, `Agresivo`, and `Desactivado` options

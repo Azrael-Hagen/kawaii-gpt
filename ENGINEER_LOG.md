@@ -1,5 +1,23 @@
 # Engineer Log
 
+## [CP-23] 2026-04-13
+**Status**: Passed
+**Decisions made**:
+- Hardened provider failover paths so local fallback attempts always run with bounded per-attempt timeouts, including streaming branches that previously depended only on the global timeout
+- Made cloud image generation abort-aware by wiring `AbortSignal` end-to-end (`ChatClient` contract, `OpenAICompatibleClient.generateImage`, and `useChat` image orchestration)
+- Updated Electron runtime dependency to `^41.2.0` and applied non-breaking audit remediations to clear HIGH/CRITICAL vulnerability findings
+- Kept autorecovery learning deterministic and local (case-based repair memory) rather than introducing heavyweight external ML libraries for runtime diagnosis
+
+**Trade-offs**:
+- Remaining `npm audit` findings are moderate and require a major Vite/electron-vite toolchain jump; deferred to avoid destabilizing the release path in this hardening patch
+
+**Debt deferred**:
+- Migrate to next major toolchain (`electron-vite`/`vite`) to remove `esbuild` advisory and eliminate CJS deprecation warnings in test/build output
+
+**Next steps**:
+- Execute a dedicated toolchain-upgrade checkpoint with compatibility matrix and rollback plan
+- Add E2E scenario that forces provider/image timeout cancellation from UI to assert abort propagation at runtime
+
 ## [CP-22.1] 2026-04-11
 **Status**: Passed
 **Decisions made**:

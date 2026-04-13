@@ -158,4 +158,20 @@ describe('aiClient', () => {
     await expect(client.generateImage?.('genera un gato', 'dall-e-3'))
       .rejects.toThrow(/Image generation failed \(404\): Respuesta HTML inesperada del proveedor \(endpoint invalido o no soportado\)\. OpenRouter no expone este endpoint de imagen/)
   })
+
+  it('forwards abort signal in image generation requests', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ data: [{ url: 'https://example.com/image.png' }] }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const client = new OpenAICompatibleClient('https://api.openai.com/v1', 'secret')
+    const controller = new AbortController()
+    await client.generateImage?.('genera un paisaje', 'gpt-image-1', controller.signal)
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const options = fetchMock.mock.calls[0][1] as { signal?: AbortSignal }
+    expect(options.signal).toBeDefined()
+  })
 })

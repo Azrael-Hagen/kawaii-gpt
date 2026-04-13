@@ -246,7 +246,7 @@ function adaptTemperature(base: number, text: string): number {
 
 function shouldBackoffCloud(settings: Settings): boolean {
   if (settings.provider !== 'smart') return false
-  if (!settings.autoFailover || !settings.localModel) return false
+  if (!settings.autoFailover) return false
   if (shouldAvoidLocalInSmart(settings)) return false
 
   const last = settings.cloudDiagnostics

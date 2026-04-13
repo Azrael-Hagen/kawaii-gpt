@@ -51,6 +51,25 @@ describe('smartRouting', () => {
     expect(decision.target).toBe('local')
   })
 
+  it('backs off cloud even when local model is not manually configured', () => {
+    const settings = {
+      ...DEFAULT_SETTINGS,
+      provider: 'smart' as const,
+      localModel: '',
+      autoFailover: true,
+      cloudDiagnostics: {
+        lastProvider: 'cloud • gpt-5.4-mini',
+        lastError: 'network timeout',
+        lastAt: Date.now(),
+        attempt: 1,
+        total: 1,
+      },
+    }
+
+    const decision = selectRoute(settings, 'Necesito un resumen corto')
+    expect(decision.target).toBe('local')
+  })
+
   it('keeps smart mode cloud routing when network failure is stale', () => {
     const settings = {
       ...DEFAULT_SETTINGS,
