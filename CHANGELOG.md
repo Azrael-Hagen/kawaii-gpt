@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.6.0] - 2026-04-13
+### Added
+- Recovery reinforcement for image generation success when provider rotated (idx > 0)
+- Recovery reinforcement for web search repair success (when web context denial is recovered via re-generation)
+- Extended autorecovery learning to cover complete feature lifecycle (chat, image, web search)
+
+### Changed
+- Confidence scoring for recovery actions now includes successful image generation and web-grounded response repairs
+- Knowledge base accumulates bidirectional feedback: both failure patterns AND successful automatic recoveries
+
+### Technical
+- Image generation fallback now calls `reinforceRecovery()` when alternate provider completes successfully
+- Web search repair flow now reinforces recovery knowledge when web-denied response is successfully rewritten
+
+## [0.5.0] - 2026-04-13
+### Changed
+- Dedicated major upgrade phase applied to close residual toolchain risk without mixing functional feature changes
+- Upgraded build/test stack to `electron-vite@5.0.0`, `vite@7.3.2`, `vitest@4.1.4`, and `@vitejs/plugin-react@5.2.0`
+
+### Fixed
+- Eliminated all previously deferred moderate advisories tied to Vite/esbuild and test/build toolchain (`npm audit` now reports zero vulnerabilities)
+- Preserved end-to-end runtime behavior after upgrade (unit tests, production build, and E2E critical chat/UI flow all passing)
+
 ## [0.4.32] - 2026-04-13
 ### Added
 - Smart routing regression test to enforce cloud cooldown fallback even when `localModel` is empty and resolved automatically

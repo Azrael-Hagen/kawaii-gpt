@@ -10,7 +10,13 @@ import {
   providerSupportsImageGeneration,
 } from '@/services/cloudCatalog'
 import { ensureLegacyRuntimeReady } from '@/services/legacyRuntime'
-import { analyzeErrorMessage, appendErrorLog, createErrorLogEntry, updateErrorKnowledgeBase } from '@/services/errorDiagnostics'
+import {
+  analyzeErrorMessage,
+  appendErrorLog,
+  createErrorLogEntry,
+  registerRecoverySuccess,
+  updateErrorKnowledgeBase,
+} from '@/services/errorDiagnostics'
 import { prependWebContext, selectRoute } from '@/services/smartRouting'
 import { extractImportantUserFacts, prependUserMemoryContext } from '@/services/userMemory'
 import { searchWeb } from '@/services/webSearch'
@@ -51,8 +57,8 @@ const LEGACY_CONFLICT_WINDOW_MS = 10 * 60_000
 const CLOUD_HEALTH_WINDOW_MS = 12 * 60 * 60_000
 const CLOUD_FAILURE_WINDOW_MS = 30 * 60_000
 const CLOUD_PROVIDER_ATTEMPT_TIMEOUT_MS = 28_000
-const CHAT_TIMEOUT_MS = 110_000
-const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 28_000
+const CHAT_TIMEOUT_MS = 200_000
+const LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS = 90_000
 const CLOUD_CONTEXT_BUDGET_CHARS = 28_000
 const LOCAL_CONTEXT_BUDGET_CHARS = 18_000
 const CONTEXT_BUDGET_MAX_MESSAGES = 16
@@ -673,7 +679,7 @@ function computeLocalAttemptTimeoutMs(
   contextChars = 0,
   maxTokens = 0,
 ): number {
-  let timeoutMs = isSmartRoute ? LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS : 36_000
+  let timeoutMs = isSmartRoute ? LOCAL_PROVIDER_ATTEMPT_TIMEOUT_MS : 90_000
   const rtt = getNetworkRttMs()
 
   if (rtt >= 300) timeoutMs += 2_000
@@ -686,7 +692,7 @@ function computeLocalAttemptTimeoutMs(
   if (maxTokens >= 700) timeoutMs += 3_000
   if (maxTokens >= 1_200) timeoutMs += 4_000
 
-  return Math.max(18_000, Math.min(70_000, timeoutMs))
+  return Math.max(18_000, Math.min(150_000, timeoutMs))
 }
 
 function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number): number {
@@ -697,9 +703,9 @@ function computeAdaptiveChatTimeoutMs(settings: Settings, providerCount: number)
 
   if (rtt >= 300) timeoutMs += 4_000
   if (rtt >= 700) timeoutMs += 8_000
-  if (rtt >= 1_200) timeoutMs += 12_000
+  if (rtt >= 1_200) timeoutMs += 15_000
 
-  return Math.max(CHAT_TIMEOUT_MS, Math.min(180_000, timeoutMs))
+  return Math.max(CHAT_TIMEOUT_MS, Math.min(360_000, timeoutMs))
 }
 
 function computeAdaptiveMaxTokens(
@@ -1053,6 +1059,19 @@ export function useChat(models: AIModel[] = []) {
     })
   }, [updateSettings])
 
+  const reinforceRecovery = useCallback((input: {
+    recommendedAction: string
+    provider?: string
+    route?: string
+    category?: Settings['errorLogs'][number]['analysis']['category']
+    sampleMessage?: string
+  }) => {
+    const currentSettings = useSettingsStore.getState().settings
+    const nextKnowledgeBase = registerRecoverySuccess(currentSettings.errorKnowledgeBase, input)
+    if (nextKnowledgeBase === currentSettings.errorKnowledgeBase) return
+    updateSettings({ errorKnowledgeBase: nextKnowledgeBase })
+  }, [updateSettings])
+
   const sendMessage = useCallback(async (content: string, attachments: MessageAttachment[] = []): Promise<void> => {
       let diagId: string | null = null
       if (enableDiag) {
@@ -1261,6 +1280,15 @@ export function useChat(models: AIModel[] = []) {
                 `imagen • ${cfg.label} • ${imageModel}`,
               )
               updateSettings({ cloudDiagnostics: null })
+              if (idx > 0) {
+                reinforceRecovery({
+                  recommendedAction: 'rotate_provider',
+                  provider: cfg.label,
+                  route: 'cloud->cloud',
+                  category: 'model',
+                  sampleMessage: 'Image generation recovered via provider rotation.',
+                })
+              }
               setIsLoading(false)
               return
             } catch (err) {
@@ -1849,6 +1877,13 @@ export function useChat(models: AIModel[] = []) {
               }
               updateSettings({ cloudDiagnostics: null })
               markCloudProviderSuccess(cfg.baseUrl)
+                reinforceRecovery({
+                  recommendedAction: 'switch_to_cloud',
+                  provider: cfg.label,
+                  route: 'local->cloud',
+                  category: 'timeout',
+                  sampleMessage: 'Fallback local->cloud succeeded after local runtime instability.',
+                })
               addChatTraceEvent(traceId, 'cloud_attempt_success', {
                 provider: cfg.label,
                 elapsedMs: Date.now() - cloudAttemptStartedAt,
@@ -1902,13 +1937,22 @@ export function useChat(models: AIModel[] = []) {
 
     // ── Cloud mode with automatic provider rotation ───────────────────────────
     if (cloudQueue.length === 0) {
-      if (settings.provider === 'smart') {
-        const localModel = resolveLocalModelName(settings, models)
+      if (settings.provider === 'smart' || settings.provider === 'openai-compatible') {
+        let localModel = resolveLocalModelName(settings, models)
+        if (!localModel) {
+          try {
+            const discoveredLocal = await new OllamaClient(settings.localBaseUrl).listModels()
+            const bestDiscovered = pickMostIntelligentLocalModel(discoveredLocal)
+            localModel = stripPrefix(bestDiscovered?.name || discoveredLocal[0]?.name || '')
+          } catch {
+            localModel = ''
+          }
+        }
         if (localModel && !avoidLocalFallback) {
           const localClient = new OllamaClient(settings.localBaseUrl)
           const localAttemptTimeoutMs = computeLocalAttemptTimeoutMs(
             useSettingsStore.getState().settings,
-            true,
+            settings.provider === 'smart',
             effectiveContextChars,
             settings.localMaxTokens,
           )
@@ -1945,7 +1989,7 @@ export function useChat(models: AIModel[] = []) {
               )
               updateMessage(convId!, assistantId, r, false, undefined, `local (smart fallback) • ${localModel}`)
             }
-            logError('Cloud queue vacia en Smart mode; fallback local aplicado.', {
+            logError('Cloud queue vacia; fallback local aplicado.', {
               provider: settings.localBaseUrl,
               route: 'cloud->local',
               autoRepairApplied: true,
@@ -2068,6 +2112,13 @@ export function useChat(models: AIModel[] = []) {
               responseText,
             )
             addChatTraceEvent(traceId, 'web_response_repair_success', { provider: cfg.label })
+            reinforceRecovery({
+              recommendedAction: 'rotate_provider',
+              provider: cfg.label,
+              route: 'cloud->cloud',
+              category: 'policy',
+              sampleMessage: 'Web-grounded response repair succeeded; provider recovered after initial denial.',
+            })
           }
           if (isLikelyPolicyRefusal(responseText) && isLikelyBenignPrompt(routePrompt) && idx < cloudQueue.length - 1) {
             throw new Error(`${SOFT_REFUSAL_ERR}: respuesta bloqueada en prompt benigno`)
@@ -2076,6 +2127,15 @@ export function useChat(models: AIModel[] = []) {
         }
         updateSettings({ cloudDiagnostics: null })
         markCloudProviderSuccess(cfg.baseUrl)
+        if (idx > 0) {
+          reinforceRecovery({
+            recommendedAction: 'rotate_provider',
+            provider: cfg.label,
+            route: 'cloud->cloud',
+            category: 'network',
+            sampleMessage: 'Cloud provider rotation recovered the request.',
+          })
+        }
         addChatTraceEvent(traceId, 'cloud_attempt_success', {
           provider: cfg.label,
           elapsedMs: Date.now() - cloudAttemptStartedAt,
@@ -2236,6 +2296,13 @@ export function useChat(models: AIModel[] = []) {
                 updateMessage(convId!, assistantId, retried, false, undefined, `${cfg.label} • auto-token-cap`)
               }
               updateSettings({ cloudDiagnostics: null })
+              reinforceRecovery({
+                recommendedAction: 'compact_context',
+                provider: cfg.label,
+                route: 'cloud->cloud',
+                category: 'policy',
+                sampleMessage: `Auto-token-cap retry succeeded with max_tokens=${retryMaxTokens}.`,
+              })
               addChatTraceEvent(traceId, 'quota_retry_success', {
                 provider: cfg.label,
                 retryMaxTokens,
